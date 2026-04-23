@@ -239,10 +239,16 @@ def write_report(
             "config_name",
             "ground_truth_json",
             "model_output_json",
+            "raw_response_text",
             "diff",
         ]
     else:
-        headers = ["invoice_id", "config_name", "model_output_json"]
+        headers = [
+            "invoice_id",
+            "config_name",
+            "model_output_json",
+            "raw_response_text",
+        ]
     _write_header(ws, headers)
     for r in raw_rows:
         if scoring_enabled:
@@ -252,14 +258,22 @@ def write_report(
                     r["config_name"],
                     r["ground_truth_json"],
                     r["model_output_json"],
+                    _clip_for_excel(r.get("raw_response") or "(no response)"),
                     r["diff"],
                 ]
             )
         else:
-            ws.append([r["invoice_id"], r["config_name"], r["model_output_json"]])
-    # JSON columns: wrap text
-    json_cols = [3, 4, 5] if scoring_enabled else [3]
-    for col_idx in json_cols:
+            ws.append(
+                [
+                    r["invoice_id"],
+                    r["config_name"],
+                    r["model_output_json"],
+                    _clip_for_excel(r.get("raw_response") or "(no response)"),
+                ]
+            )
+    # JSON + raw-text columns: wrap text
+    text_cols = [3, 4, 5, 6] if scoring_enabled else [3, 4]
+    for col_idx in text_cols:
         col_letter = get_column_letter(col_idx)
         ws.column_dimensions[col_letter].width = 70
         for row in ws.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx):
@@ -269,6 +283,15 @@ def write_report(
         ws.column_dimensions[get_column_letter(col_idx)].width = 24
 
     wb.save(output_path)
+
+
+def _clip_for_excel(s: str, max_len: int = 32000) -> str:
+    """Excel cap on a single cell is ~32767 chars. Clip to be safe."""
+    if s is None:
+        return ""
+    if len(s) <= max_len:
+        return s
+    return s[:max_len] + f"\n... [clipped {len(s) - max_len} chars]"
 
 
 def json_pretty(obj: Any) -> str:

@@ -268,6 +268,7 @@ def run_one(
     total_cost = 0.0
     notes: list[str] = []
     pred: Optional[dict] = None
+    raw_texts: list[str] = []  # collected model responses for debugging
 
     def _accumulate(call: ModelCall, model_key: str) -> None:
         nonlocal total_in, total_out, total_latency, total_cost
@@ -280,6 +281,10 @@ def run_one(
             _tok(call.output_tokens),
             cfg_yaml["pricing"],
         )
+        # Stash raw text for debug so we can see what the model actually
+        # returned, even when parsing failed or output was empty.
+        if call.raw_text is not None:
+            raw_texts.append(call.raw_text)
 
     if not cfg.is_hybrid:
         prompt = build_unified_prompt(
@@ -386,6 +391,7 @@ def run_one(
             for f in (scores.per_field if scores else [])
         ],
         "pred": pred,
+        "raw_response": "\n\n--- next call ---\n\n".join(raw_texts) if raw_texts else "",
         "ground_truth": job.ground_truth,
         "failed": pred is None,
         "has_ground_truth": job.ground_truth is not None,
@@ -465,6 +471,7 @@ def run(
                 "config_name": cfg_name,
                 "ground_truth_json": json_pretty(job.ground_truth) if job.ground_truth else "(no ground truth)",
                 "model_output_json": json_pretty(row.get("pred") or {}),
+                "raw_response": row.get("raw_response") or "(no response)",
                 "diff": json_diff(job.ground_truth or {}, row.get("pred") or {}) if job.ground_truth else "(no ground truth — verify manually)",
             }
         )
@@ -498,6 +505,7 @@ def run(
             "notes": reason,
             "per_field": [],
             "pred": None,
+            "raw_response": "",
             "ground_truth": job.ground_truth,
             "failed": True,
             "has_ground_truth": job.ground_truth is not None,
