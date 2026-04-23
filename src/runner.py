@@ -61,8 +61,17 @@ def load_jobs(cfg: dict, limit: Optional[int]) -> list[InvoiceJob]:
     agreements_dir = Path(cfg["paths"]["agreements_dir"])
     gt_path = Path(cfg["paths"]["ground_truth"])
 
+    log.info(
+        "load_jobs: invoices_dir=%s agreements_dir=%s ground_truth=%s",
+        invoices_dir.resolve(),
+        agreements_dir.resolve(),
+        gt_path.resolve(),
+    )
+
     if not invoices_dir.exists():
-        raise FileNotFoundError(f"Invoices directory not found: {invoices_dir}")
+        raise FileNotFoundError(
+            f"Invoices directory not found: {invoices_dir.resolve()}"
+        )
 
     all_agreements = []
     if agreements_dir.exists():
@@ -104,10 +113,16 @@ def load_jobs(cfg: dict, limit: Optional[int]) -> list[InvoiceJob]:
         for ext in SUPPORTED_INVOICE_EXTS:
             discovered.extend(sorted(invoices_dir.glob(f"*{ext}")))
         if not discovered:
+            on_disk = [p.name for p in invoices_dir.iterdir() if p.is_file()][:20]
             raise FileNotFoundError(
-                f"No invoice files found in {invoices_dir} "
+                f"No invoice files found in {invoices_dir.resolve()} "
                 f"(looking for {sorted(SUPPORTED_INVOICE_EXTS)}). "
-                "Upload some invoices first."
+                f"Files currently in that directory: {on_disk or '(empty)'}. "
+                "Upload some invoices first. "
+                "Note: on free-tier hosts with ephemeral disks, uploads are "
+                "wiped when the service restarts or re-deploys. If that's "
+                "likely what happened, just upload again and start the run "
+                "immediately after."
             )
         for inv_path in discovered:
             jobs.append(

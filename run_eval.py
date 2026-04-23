@@ -55,11 +55,19 @@ def main() -> int:
 
     console = Console()
 
-    cfg_path = Path(args.config_file)
+    cfg_path = Path(args.config_file).resolve()
     if not cfg_path.exists():
         console.print(f"[red]Config file not found:[/red] {cfg_path}")
         return 2
     cfg_yaml = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+
+    # Absolute-ize data paths relative to config file's directory, so the tool
+    # works regardless of CWD.
+    base_dir = cfg_path.parent
+    if isinstance(cfg_yaml.get("paths"), dict):
+        for k, v in list(cfg_yaml["paths"].items()):
+            if isinstance(v, str) and not Path(v).is_absolute():
+                cfg_yaml["paths"][k] = str((base_dir / v).resolve())
 
     weights = cfg_yaml["scoring_weights"]
     total_w = sum(weights.values())

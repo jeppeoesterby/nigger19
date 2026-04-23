@@ -174,9 +174,15 @@
       </div>
     </div>
 
-    <button type="submit">Start evaluation</button>
+    <button type="submit" {% if not data_info.invoice_count_on_disk %}disabled style="opacity: 0.5; cursor: not-allowed;"{% endif %}>
+      Start evaluation
+    </button>
     <span class="muted" style="margin-left: 12px; font-size: 13px;">
-      {{ data_info.jobs|length }} invoices × selected configs = N runs
+      {% if data_info.invoice_count_on_disk %}
+        {{ data_info.invoice_count_on_disk }} invoices × selected configs
+      {% else %}
+        Upload invoices first — none on disk.
+      {% endif %}
     </span>
   </form>
 </div>

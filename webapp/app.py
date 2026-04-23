@@ -49,7 +49,12 @@ MAX_LOG_LINES = 500
 def create_app(config_path: str = "config.yaml") -> Flask:
     load_dotenv()
     app = Flask(__name__)
-    app.config["CFG_PATH"] = config_path
+    cfg_path_abs = Path(config_path).resolve()
+    app.config["CFG_PATH"] = str(cfg_path_abs)
+    # Repo root = directory containing config.yaml. All relative data paths
+    # resolve against this so CWD differences between gunicorn workers and
+    # background threads never matter.
+    app.config["BASE_DIR"] = str(cfg_path_abs.parent)
     # 2 GB per request. Keeps a ceiling for pathological cases but lets a batch
     # of 100+ invoices through comfortably.
     app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024
@@ -67,7 +72,18 @@ def create_app(config_path: str = "config.yaml") -> Flask:
         )
 
     def _cfg() -> dict:
-        return yaml.safe_load(Path(app.config["CFG_PATH"]).read_text(encoding="utf-8"))
+        c = yaml.safe_load(Path(app.config["CFG_PATH"]).read_text(encoding="utf-8"))
+        base = Path(app.config["BASE_DIR"])
+        # Absolute-ize every path under `paths:` so relative configs work
+        # regardless of CWD.
+        if isinstance(c.get("paths"), dict):
+            for k, v in list(c["paths"].items()):
+                if not isinstance(v, str):
+                    continue
+                p = Path(v)
+                if not p.is_absolute():
+                    c["paths"][k] = str((base / p).resolve())
+        return c
 
     def _ensure_data_dirs() -> None:
         c = _cfg()
@@ -304,6 +320,7 @@ def create_app(config_path: str = "config.yaml") -> Flask:
     # ---------------- data upload ----------------
 
     def _save_files(files, target_dir: Path, allowed_exts: set[str]) -> tuple[int, int]:
+        target_dir = target_dir.resolve()
         target_dir.mkdir(parents=True, exist_ok=True)
         saved = skipped = 0
         for f in files:
@@ -314,8 +331,10 @@ def create_app(config_path: str = "config.yaml") -> Flask:
                 skipped += 1
                 continue
             safe = secure_filename(f.filename) or f"upload{ext}"
-            f.save(str(target_dir / safe))
+            dest = target_dir / safe
+            f.save(str(dest))
             saved += 1
+        log.info("Saved %d files to %s (skipped %d)", saved, target_dir, skipped)
         return saved, skipped
 
     @app.route("/upload/invoices", methods=["POST"])
