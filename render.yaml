@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: difacto-llm-eval
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --workers 1 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT wsgi:app
+    autoDeploy: true
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: FLASK_SECRET_KEY
+        generateValue: true

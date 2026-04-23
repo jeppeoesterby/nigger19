@@ -5,7 +5,11 @@ live progress, and download the Excel report.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
+import secrets
+import shutil
 import threading
 import uuid
 from collections import deque
@@ -18,6 +22,8 @@ from dotenv import load_dotenv
 from flask import (
     Flask,
     abort,
+    flash,
+    get_flashed_messages,
     jsonify,
     redirect,
     render_template,
@@ -25,6 +31,7 @@ from flask import (
     send_from_directory,
     url_for,
 )
+from werkzeug.utils import secure_filename
 
 from src.clients import build_clients
 from src.configs import CONFIGS, filter_configs
@@ -42,9 +49,18 @@ def create_app(config_path: str = "config.yaml") -> Flask:
     load_dotenv()
     app = Flask(__name__)
     app.config["CFG_PATH"] = config_path
+    app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB per request
+    app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(16)
 
     def _cfg() -> dict:
         return yaml.safe_load(Path(app.config["CFG_PATH"]).read_text(encoding="utf-8"))
+
+    def _ensure_data_dirs() -> None:
+        c = _cfg()
+        for key in ("invoices_dir", "agreements_dir", "results_dir"):
+            Path(c["paths"][key]).mkdir(parents=True, exist_ok=True)
+
+    _ensure_data_dirs()
 
     def _scan_data(cfg_yaml: dict) -> dict:
         invoices_dir = Path(cfg_yaml["paths"]["invoices_dir"])
@@ -203,6 +219,111 @@ def create_app(config_path: str = "config.yaml") -> Flask:
         if not target.exists():
             abort(404)
         return send_from_directory(results_dir, filename, as_attachment=True)
+
+    # ---------------- data upload ----------------
+
+    def _save_files(files, target_dir: Path, allowed_exts: set[str]) -> tuple[int, int]:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        saved = skipped = 0
+        for f in files:
+            if not f or not f.filename:
+                continue
+            ext = Path(f.filename).suffix.lower()
+            if ext not in allowed_exts:
+                skipped += 1
+                continue
+            safe = secure_filename(f.filename) or f"upload{ext}"
+            f.save(str(target_dir / safe))
+            saved += 1
+        return saved, skipped
+
+    @app.route("/upload/invoices", methods=["POST"])
+    def upload_invoices():
+        cfg_yaml = _cfg()
+        files = request.files.getlist("files")
+        saved, skipped = _save_files(
+            files, Path(cfg_yaml["paths"]["invoices_dir"]), {".pdf"}
+        )
+        msg = f"Uploaded {saved} PDF(s)."
+        if skipped:
+            msg += f" Skipped {skipped} non-PDF file(s)."
+        flash(msg)
+        return redirect(url_for("index"))
+
+    @app.route("/upload/agreements", methods=["POST"])
+    def upload_agreements():
+        cfg_yaml = _cfg()
+        files = request.files.getlist("files")
+        saved, skipped = _save_files(
+            files, Path(cfg_yaml["paths"]["agreements_dir"]), {".xlsx"}
+        )
+        msg = f"Uploaded {saved} agreement(s)."
+        if skipped:
+            msg += f" Skipped {skipped} non-xlsx file(s)."
+        flash(msg)
+        return redirect(url_for("index"))
+
+    @app.route("/upload/ground_truth", methods=["POST"])
+    def upload_ground_truth():
+        cfg_yaml = _cfg()
+        f = request.files.get("file")
+        gt_path = Path(cfg_yaml["paths"]["ground_truth"])
+        if not f or not f.filename:
+            flash("No file selected.")
+            return redirect(url_for("index"))
+        if Path(f.filename).suffix.lower() != ".json":
+            flash("Ground truth must be a .json file.")
+            return redirect(url_for("index"))
+        content = f.read()
+        try:
+            parsed = json.loads(content)
+            if not isinstance(parsed, dict):
+                raise ValueError("ground_truth.json must be a JSON object")
+        except Exception as e:
+            flash(f"Invalid JSON: {e}")
+            return redirect(url_for("index"))
+        gt_path.parent.mkdir(parents=True, exist_ok=True)
+        gt_path.write_bytes(content)
+        flash(f"Ground truth saved ({len(parsed)} invoice entries).")
+        return redirect(url_for("index"))
+
+    @app.route("/clear", methods=["POST"])
+    def clear_data():
+        cfg_yaml = _cfg()
+        what = request.form.get("what", "")
+        removed = 0
+        if what == "invoices":
+            d = Path(cfg_yaml["paths"]["invoices_dir"])
+            for p in d.glob("*.pdf"):
+                p.unlink()
+                removed += 1
+            flash(f"Deleted {removed} invoice PDF(s).")
+        elif what == "agreements":
+            d = Path(cfg_yaml["paths"]["agreements_dir"])
+            for p in d.glob("*.xlsx"):
+                p.unlink()
+                removed += 1
+            flash(f"Deleted {removed} agreement file(s).")
+        elif what == "ground_truth":
+            p = Path(cfg_yaml["paths"]["ground_truth"])
+            if p.exists():
+                p.unlink()
+                flash("Ground truth deleted.")
+            else:
+                flash("No ground truth to delete.")
+        elif what == "all":
+            for key in ("invoices_dir", "agreements_dir"):
+                d = Path(cfg_yaml["paths"][key])
+                if d.exists():
+                    shutil.rmtree(d)
+                    d.mkdir(parents=True, exist_ok=True)
+            p = Path(cfg_yaml["paths"]["ground_truth"])
+            if p.exists():
+                p.unlink()
+            flash("All uploaded data cleared.")
+        else:
+            flash("Unknown clear target.")
+        return redirect(url_for("index"))
 
     return app
 

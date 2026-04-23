@@ -86,22 +86,61 @@ loudly if the file is missing.
 
 ## Running
 
-### Web UI (recommended)
+### Deploy to Render (zero terminal — easiest path)
+
+The repo is already configured as a Render Blueprint (`render.yaml`).
+You'll get a URL like `https://difacto-llm-eval-xxxx.onrender.com` that
+anyone with the link can use — no local Python, no CLI.
+
+1. Sign up at https://render.com with your GitHub account (free).
+2. Click **New** → **Blueprint**.
+3. Select your `nigger19` repo and the branch
+   `claude/llm-evaluation-harness-e47hv`. Render reads `render.yaml` and
+   shows "difacto-llm-eval — Web Service".
+4. Click **Apply**. When Render prompts for values:
+   - `ANTHROPIC_API_KEY` — paste your Anthropic key
+   - `GOOGLE_API_KEY` — paste your Google/Gemini key
+   - `FLASK_SECRET_KEY` — Render auto-generates this, leave it alone
+5. Wait 2–3 minutes for the first build to finish.
+6. Open the URL. Use the **Upload data** card to drag in PDFs, agreements,
+   and `ground_truth.json`. Then kick off a run.
+
+**Free tier caveats:**
+- Spins down after 15 min of inactivity. First visit after a spin-down
+  takes 30–60 seconds to wake up. Subsequent requests are instant.
+- Uploaded files live on ephemeral disk — if the service restarts, you'll
+  need to re-upload. Upgrade to a paid plan (~$7/mo) if you want persistence.
+- The URL is not secret from anyone who knows it. Don't share it casually,
+  since anyone with the URL can run API calls on your bill.
+
+### Local web UI
 
 ```bash
 python run_web.py
 # open http://127.0.0.1:5000
 ```
 
-The home page shows your data folder status, lets you pick which
-configurations to run, set a limit, and kick off a run. The run page shows
-live progress, a streaming log, and offers a download button for the Excel
-report when finished. All past results are listed and downloadable.
+The home page shows your data folder status, lets you upload data, pick
+which configurations to run, set a limit, and kick off a run. The run
+page shows live progress, a streaming log, and offers a download button
+for the Excel report when finished.
 
 Bind options:
 - `python run_web.py --port 8000` — different port
-- `python run_web.py --host 0.0.0.0` — expose to your LAN (careful: your API
-  keys are loaded; don't do this on an untrusted network)
+- `python run_web.py --host 0.0.0.0` — expose to your LAN (careful: API keys
+  are loaded; don't do this on an untrusted network)
+
+### Docker
+
+```bash
+docker build -t difacto-eval .
+docker run -p 8080:8080 \
+  -e ANTHROPIC_API_KEY=sk-ant-... \
+  -e GOOGLE_API_KEY=AIza... \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/results:/app/results" \
+  difacto-eval
+```
 
 ### CLI
 

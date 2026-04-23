@@ -48,6 +48,65 @@
   </div>
 </div>
 
+<div class="card">
+  <h2>Upload data</h2>
+  <p class="muted" style="margin-bottom: 14px;">
+    Drop your PDFs, agreements, and <code>ground_truth.json</code> here. Files
+    are stored on the server's disk under <code>data/</code>. On free hosting
+    tiers with ephemeral disk, uploads may be lost when the service restarts —
+    re-upload if that happens.
+  </p>
+  <div class="upload-grid">
+    <div class="upload-tile">
+      <h3>Invoice PDFs</h3>
+      <p>One or many. <code>.pdf</code> only.</p>
+      <form action="{{ url_for('upload_invoices') }}" method="POST" enctype="multipart/form-data">
+        <input type="file" name="files" accept=".pdf" multiple required>
+        <button type="submit">Upload PDFs</button>
+      </form>
+      {% if data_info.invoice_count_on_disk %}
+      <form action="{{ url_for('clear_data') }}" method="POST" style="margin-top: 8px;"
+            onsubmit="return confirm('Delete all {{ data_info.invoice_count_on_disk }} invoice PDFs?');">
+        <input type="hidden" name="what" value="invoices">
+        <button type="submit" class="danger-btn">Clear all</button>
+      </form>
+      {% endif %}
+    </div>
+
+    <div class="upload-tile">
+      <h3>Agreements (.xlsx)</h3>
+      <p>Supplier price agreements. <code>.xlsx</code> only.</p>
+      <form action="{{ url_for('upload_agreements') }}" method="POST" enctype="multipart/form-data">
+        <input type="file" name="files" accept=".xlsx" multiple required>
+        <button type="submit">Upload agreements</button>
+      </form>
+      {% if data_info.agreement_count_on_disk %}
+      <form action="{{ url_for('clear_data') }}" method="POST" style="margin-top: 8px;"
+            onsubmit="return confirm('Delete all {{ data_info.agreement_count_on_disk }} agreements?');">
+        <input type="hidden" name="what" value="agreements">
+        <button type="submit" class="danger-btn">Clear all</button>
+      </form>
+      {% endif %}
+    </div>
+
+    <div class="upload-tile">
+      <h3>ground_truth.json</h3>
+      <p>Single file. Replaces existing.</p>
+      <form action="{{ url_for('upload_ground_truth') }}" method="POST" enctype="multipart/form-data">
+        <input type="file" name="file" accept=".json" required>
+        <button type="submit">Upload ground truth</button>
+      </form>
+      {% if data_info.ground_truth_exists %}
+      <form action="{{ url_for('clear_data') }}" method="POST" style="margin-top: 8px;"
+            onsubmit="return confirm('Delete ground_truth.json?');">
+        <input type="hidden" name="what" value="ground_truth">
+        <button type="submit" class="danger-btn">Delete</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
 {% if active_runs %}
 <div class="card">
   <h2>Active runs</h2>
