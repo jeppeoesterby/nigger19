@@ -86,6 +86,25 @@ loudly if the file is missing.
 
 ## Running
 
+### Web UI (recommended)
+
+```bash
+python run_web.py
+# open http://127.0.0.1:5000
+```
+
+The home page shows your data folder status, lets you pick which
+configurations to run, set a limit, and kick off a run. The run page shows
+live progress, a streaming log, and offers a download button for the Excel
+report when finished. All past results are listed and downloadable.
+
+Bind options:
+- `python run_web.py --port 8000` — different port
+- `python run_web.py --host 0.0.0.0` — expose to your LAN (careful: your API
+  keys are loaded; don't do this on an untrusted network)
+
+### CLI
+
 ```bash
 # Full run: all 6 configs, all invoices
 python run_eval.py
@@ -100,8 +119,8 @@ python run_eval.py --limit 5
 python run_eval.py --dry-run
 ```
 
-Each run writes a timestamped Excel file to `results/eval_YYYY-MM-DD_HHMM.xlsx`.
-Runs never overwrite previous results.
+Each run (web or CLI) writes a timestamped Excel file to
+`results/eval_YYYY-MM-DD_HHMM.xlsx`. Runs never overwrite previous results.
 
 ## Adding invoices
 
@@ -143,19 +162,23 @@ Weights are configurable in `config.yaml`. Defaults:
 
 ```
 .
-├── run_eval.py              # entry point
+├── run_eval.py              # CLI entry point
+├── run_web.py               # Web UI entry point
 ├── config.yaml              # model IDs, pricing, scoring weights
 ├── requirements.txt
 ├── .env.example             # ANTHROPIC_API_KEY / GOOGLE_API_KEY
-└── src/
-    ├── clients.py           # Claude + Gemini wrappers (unified interface)
-    ├── configs.py           # the 6 configurations
-    ├── excel_writer.py      # 4-sheet output
-    ├── pricing.py           # token → USD
-    ├── prompts.py           # unified + hybrid prompts
-    ├── runner.py            # main loop
-    ├── schema.py            # Pydantic models
-    └── scorer.py            # 4 scoring functions + composite
+├── src/
+│   ├── clients.py           # Claude + Gemini wrappers (unified interface)
+│   ├── configs.py           # the 6 configurations
+│   ├── excel_writer.py      # 4-sheet output
+│   ├── pricing.py           # token → USD
+│   ├── prompts.py           # unified + hybrid prompts
+│   ├── runner.py            # main loop
+│   ├── schema.py            # Pydantic models
+│   └── scorer.py            # 4 scoring functions + composite
+└── webapp/
+    ├── app.py               # Flask app
+    └── templates/           # base, index, run, results
 ```
 
 ## Non-goals

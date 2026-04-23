@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h2>Data status</h2>
+  <div class="grid-2">
+    <div class="stat">
+      <div class="label">Invoices on disk</div>
+      <div class="value">{{ data_info.invoice_count_on_disk }}</div>
+      <p class="muted">{{ data_info.invoices_dir }}/*.pdf</p>
+    </div>
+    <div class="stat">
+      <div class="label">Agreements on disk</div>
+      <div class="value">{{ data_info.agreement_count_on_disk }}</div>
+      <p class="muted">{{ data_info.agreements_dir }}/*.xlsx</p>
+    </div>
+    <div class="stat">
+      <div class="label">Ground truth</div>
+      <div class="value">
+        {% if data_info.ground_truth_exists %}
+          <span class="ok">Loaded</span>
+        {% else %}
+          <span class="err">Missing</span>
+        {% endif %}
+      </div>
+      <p class="muted">{{ data_info.ground_truth_path }}</p>
+    </div>
+    <div class="stat">
+      <div class="label">Jobs ready</div>
+      <div class="value">{{ data_info.jobs|length }}</div>
+      <p class="muted">PDFs listed in ground truth + found on disk</p>
+    </div>
+  </div>
+
+  {% if data_info.error %}
+    <p class="err">Error scanning data: {{ data_info.error }}</p>
+  {% endif %}
+
+  <div style="margin-top: 12px;">
+    <span class="muted">API keys: </span>
+    <span class="{% if data_info.keys_configured.anthropic %}ok{% else %}err{% endif %}">
+      Anthropic {{ "OK" if data_info.keys_configured.anthropic else "missing" }}
+    </span>
+    &nbsp;&nbsp;
+    <span class="{% if data_info.keys_configured.google %}ok{% else %}err{% endif %}">
+      Google {{ "OK" if data_info.keys_configured.google else "missing" }}
+    </span>
+  </div>
+</div>
+
+{% if active_runs %}
+<div class="card">
+  <h2>Active runs</h2>
+  {% for r in active_runs %}
+    <p>
+      <span class="badge {{ r.status }}">{{ r.status }}</span>
+      <a href="{{ url_for('run_page', run_id=r.id) }}">Run {{ r.id }}</a>
+      &mdash; started {{ r.started_at }}
+    </p>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Start a run</h2>
+  <form method="POST" action="{{ url_for('start_run') }}">
+    <label>Configurations</label>
+    <div class="config-grid" style="margin-bottom: 16px;">
+      {% for c in configs %}
+      <label class="config-check">
+        <input type="checkbox" name="configs" value="{{ c }}" checked>
+        <span>{{ c }}</span>
+      </label>
+      {% endfor %}
+    </div>
+
+    <div class="row" style="margin-bottom: 16px;">
+      <div>
+        <label for="limit">Invoice limit (optional)</label>
+        <input type="number" id="limit" name="limit" placeholder="e.g. 5 (leave blank for all)" min="1">
+      </div>
+      <div style="flex: 0 0 auto;">
+        <label class="config-check" style="margin-bottom: 0;">
+          <input type="checkbox" name="dry_run">
+          <span>Dry run (validate plan only)</span>
+        </label>
+      </div>
+    </div>
+
+    <button type="submit">Start evaluation</button>
+    <span class="muted" style="margin-left: 12px; font-size: 13px;">
+      {{ data_info.jobs|length }} invoices × selected configs = N runs
+    </span>
+  </form>
+</div>
+
+{% if data_info.jobs %}
+<div class="card">
+  <h2>Invoices detected ({{ data_info.jobs|length }})</h2>
+  <table>
+    <thead><tr><th>Invoice</th><th>Agreement</th></tr></thead>
+    <tbody>
+      {% for j in data_info.jobs[:50] %}
+      <tr>
+        <td>{{ j.id }}</td>
+        <td>{{ j.agreement or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if data_info.jobs|length > 50 %}
+    <p class="muted">... and {{ data_info.jobs|length - 50 }} more</p>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Past results</h2>
+  {% if past_results %}
+    <table>
+      <thead><tr><th>File</th><th>Modified</th><th>Size</th><th></th></tr></thead>
+      <tbody>
+        {% for r in past_results %}
+        <tr>
+          <td>{{ r.name }}</td>
+          <td class="muted">{{ r.mtime }}</td>
+          <td class="muted">{{ r.size_kb }} KB</td>
+          <td><a href="{{ url_for('download_result', filename=r.name) }}">Download</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No runs yet.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

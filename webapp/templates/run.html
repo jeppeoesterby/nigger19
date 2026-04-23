@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Run {{ run.id }} — DiFacto LLM Eval{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>
+    Run <code>{{ run.id }}</code>
+    <span id="status-badge" class="badge {{ run.status }}" style="margin-left: 8px;">{{ run.status }}</span>
+  </h2>
+  <p class="muted">
+    Started {{ run.started_at }}
+    {% if run.dry_run %} &middot; <span class="warn">dry-run</span>{% endif %}
+    {% if run.limit %} &middot; limit={{ run.limit }}{% endif %}
+  </p>
+  <p class="muted">
+    Configs: {{ run.config_names|join(", ") }}
+  </p>
+
+  <div id="progress-wrap" style="margin-top: 12px;">
+    <div class="progress-bar"><div id="progress-fill" style="width: 0%;"></div></div>
+    <p class="muted" style="font-size: 13px;">
+      <span id="progress-text">0 / 0</span>
+      &middot; <span id="progress-current"></span>
+    </p>
+  </div>
+
+  <div id="error-box" class="err" style="display: none; margin-top: 12px;"></div>
+
+  <div id="download-box" style="display: none; margin-top: 16px;">
+    <a id="download-link" class="btn" href="#">Download Excel report</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Log</h2>
+  <pre id="log" class="log">(waiting for output...)</pre>
+</div>
+
+<div class="card" id="summary-card" style="display: none;">
+  <h2>Summary</h2>
+  <table id="summary-table">
+    <thead>
+      <tr>
+        <th>Config</th>
+        <th>Docs</th>
+        <th>Field %</th>
+        <th>Price %</th>
+        <th>Credit %</th>
+        <th>Rebate %</th>
+        <th>Composite %</th>
+        <th>Avg latency</th>
+        <th>Cost $</th>
+        <th>Failures</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+const runId = "{{ run.id }}";
+const logEl = document.getElementById("log");
+const progressFill = document.getElementById("progress-fill");
+const progressText = document.getElementById("progress-text");
+const progressCurrent = document.getElementById("progress-current");
+const statusBadge = document.getElementById("status-badge");
+const downloadBox = document.getElementById("download-box");
+const downloadLink = document.getElementById("download-link");
+const errorBox = document.getElementById("error-box");
+const summaryCard = document.getElementById("summary-card");
+const summaryTbody = document.querySelector("#summary-table tbody");
+
+let done = false;
+
+function pct(v) { return (v * 100).toFixed(1); }
+
+function renderSummary(rows) {
+  summaryTbody.innerHTML = "";
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${r.config_name}</td>
+      <td>${r.docs_tested}</td>
+      <td>${pct(r.field_extraction_accuracy)}</td>
+      <td>${pct(r.price_match_accuracy)}</td>
+      <td>${pct(r.credit_note_accuracy)}</td>
+      <td>${pct(r.rebate_accuracy)}</td>
+      <td><strong>${pct(r.composite_score)}</strong></td>
+      <td>${r.avg_latency_sec.toFixed(1)}s</td>
+      <td>$${r.total_cost_usd.toFixed(3)}</td>
+      <td>${r.failures}</td>
+    `;
+    summaryTbody.appendChild(tr);
+  }
+  summaryCard.style.display = "block";
+}
+
+async function poll() {
+  try {
+    const resp = await fetch(`/runs/${runId}/status`);
+    if (!resp.ok) throw new Error("status fetch failed");
+    const s = await resp.json();
+
+    // Log
+    logEl.textContent = s.log.join("\n") || "(waiting for output...)";
+    logEl.scrollTop = logEl.scrollHeight;
+
+    // Progress
+    const total = s.progress.total || 0;
+    const completed = s.progress.completed || 0;
+    const percent = total ? (completed / total) * 100 : 0;
+    progressFill.style.width = percent + "%";
+    progressText.textContent = `${completed} / ${total}`;
+    progressCurrent.textContent = s.progress.current || "";
+
+    // Status
+    statusBadge.textContent = s.status;
+    statusBadge.className = "badge " + s.status;
+
+    // Error
+    if (s.error) {
+      errorBox.style.display = "block";
+      errorBox.textContent = "Error: " + s.error;
+    }
+
+    // Done
+    if (s.status === "done" || s.status === "error") {
+      done = true;
+      if (s.output_filename) {
+        downloadLink.href = `/results/${encodeURIComponent(s.output_filename)}`;
+        downloadLink.textContent = `Download ${s.output_filename}`;
+        downloadBox.style.display = "block";
+      }
+      if (s.summary && s.summary.length) {
+        renderSummary(s.summary);
+      }
+    }
+  } catch (e) {
+    console.error(e);
+  }
+  if (!done) setTimeout(poll, 1500);
+}
+
+poll();
+</script>
+
+{% endblock %}

@@ -5,7 +5,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from openpyxl import load_workbook
 from pydantic import ValidationError
@@ -236,46 +236,65 @@ def run(
     clients: dict,
     limit: Optional[int] = None,
     dry_run: bool = False,
+    progress_callback: Optional[Callable[[dict], None]] = None,
 ) -> Optional[Path]:
+    """Evaluate configs x invoices.
+
+    If `progress_callback` is provided, it is called with event dicts (see
+    _emit_* helpers below) and no Rich UI is rendered. Otherwise the CLI
+    uses Rich for progress display.
+    """
     jobs = load_jobs(cfg_yaml, limit)
     if not jobs:
         raise RuntimeError(
             "No invoice jobs to run. Check that PDFs referenced in ground_truth.json exist."
         )
+    total = len(jobs) * len(configs)
+    use_web = progress_callback is not None
 
-    console.print(
-        f"[bold]Plan:[/bold] {len(jobs)} invoice(s) x {len(configs)} config(s) = "
-        f"{len(jobs) * len(configs)} total runs."
-    )
-    for c in configs:
+    def emit(event: dict) -> None:
+        if progress_callback is not None:
+            progress_callback(event)
+
+    emit({"type": "plan", "jobs": [j.invoice_id for j in jobs], "configs": [c.name for c in configs], "total": total})
+    if not use_web:
         console.print(
-            f"  - {c.name:<22} extraction={c.extraction.model_key:<20} "
-            f"reasoning={c.reasoning.model_key}"
+            f"[bold]Plan:[/bold] {len(jobs)} invoice(s) x {len(configs)} config(s) = "
+            f"{total} total runs."
         )
-    console.print("  Invoices:")
-    for j in jobs:
-        console.print(f"    - {j.invoice_id}  (agreement: {j.agreement_path or 'none'})")
+        for c in configs:
+            console.print(
+                f"  - {c.name:<22} extraction={c.extraction.model_key:<20} "
+                f"reasoning={c.reasoning.model_key}"
+            )
+        console.print("  Invoices:")
+        for j in jobs:
+            console.print(f"    - {j.invoice_id}  (agreement: {j.agreement_path or 'none'})")
 
     if dry_run:
-        console.print("[yellow]--dry-run: no API calls made.[/yellow]")
+        emit({"type": "log", "message": "Dry-run: plan validated, no API calls made."})
+        emit({"type": "done", "output_path": None})
+        if not use_web:
+            console.print("[yellow]--dry-run: no API calls made.[/yellow]")
         return None
 
     per_invoice_rows: list[dict] = []
     raw_rows: list[dict] = []
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.completed}/{task.total}"),
-        TimeElapsedColumn(),
-        TimeRemainingColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Evaluating", total=len(jobs) * len(configs))
+    emit({"type": "start", "total": total})
+
+    if use_web:
+        completed = 0
         for cfg in configs:
             for job in jobs:
-                progress.update(task, description=f"{cfg.name} :: {job.invoice_id}")
+                emit(
+                    {
+                        "type": "progress",
+                        "completed": completed,
+                        "total": total,
+                        "current": f"{cfg.name} :: {job.invoice_id}",
+                    }
+                )
                 row = run_one(job, cfg, clients, cfg_yaml)
                 per_invoice_rows.append(row)
                 raw_rows.append(
@@ -287,12 +306,51 @@ def run(
                         "diff": json_diff(job.ground_truth, row.get("pred") or {}),
                     }
                 )
-                progress.advance(task)
+                completed += 1
+                emit(
+                    {
+                        "type": "completed",
+                        "completed": completed,
+                        "total": total,
+                        "invoice_id": job.invoice_id,
+                        "config_name": cfg.name,
+                        "composite": row["composite"],
+                        "notes": row["notes"],
+                    }
+                )
+    else:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Evaluating", total=total)
+            for cfg in configs:
+                for job in jobs:
+                    progress.update(task, description=f"{cfg.name} :: {job.invoice_id}")
+                    row = run_one(job, cfg, clients, cfg_yaml)
+                    per_invoice_rows.append(row)
+                    raw_rows.append(
+                        {
+                            "invoice_id": job.invoice_id,
+                            "config_name": cfg.name,
+                            "ground_truth_json": json_pretty(job.ground_truth),
+                            "model_output_json": json_pretty(row.get("pred") or {}),
+                            "diff": json_diff(job.ground_truth, row.get("pred") or {}),
+                        }
+                    )
+                    progress.advance(task)
 
     summary_rows = _summarize(per_invoice_rows, configs)
     out_path = build_output_path(cfg_yaml["paths"]["results_dir"])
     write_report(out_path, summary_rows, per_invoice_rows, raw_rows)
-    console.print(f"[green]Wrote[/green] {out_path}")
+    emit({"type": "done", "output_path": str(out_path), "summary": summary_rows})
+    if not use_web:
+        console.print(f"[green]Wrote[/green] {out_path}")
     return out_path
 
 
