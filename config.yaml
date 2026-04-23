@@ -1,0 +1,50 @@
+# DiFacto LLM evaluation harness config.
+# Verify model IDs and pricing against provider docs before each run.
+
+models:
+  claude-sonnet-4-6: "claude-sonnet-4-6"
+  claude-opus-4-7: "claude-opus-4-7"
+  gemini-2.5-pro: "gemini-2.5-pro"
+  gemini-3.1-pro: "gemini-3.1-pro"
+
+# USD per 1M tokens. Verify on provider pricing pages before a real run.
+pricing:
+  claude-sonnet-4-6:
+    input: 3.00
+    output: 15.00
+  claude-opus-4-7:
+    input: 15.00
+    output: 75.00
+  gemini-2.5-pro:
+    input: 1.25
+    output: 10.00
+  gemini-3.1-pro:
+    input: 2.00
+    output: 12.00
+
+# Composite scoring weights. Must sum to 1.0.
+scoring_weights:
+  field_extraction: 0.35
+  price_match: 0.35
+  credit_note: 0.20
+  rebate: 0.10
+
+# Scoring thresholds.
+scoring:
+  supplier_fuzzy_threshold: 90
+  line_item_description_fuzzy_threshold: 85
+  numeric_tolerance: 0.01
+  rebate_dkk_tolerance: 1.0
+  rebate_pct_tolerance: 0.01
+
+api:
+  max_tokens: 8000
+  timeout_sec: 300
+  retries: 3
+  retry_backoff_sec: 4
+
+paths:
+  invoices_dir: "data/invoices"
+  agreements_dir: "data/agreements"
+  ground_truth: "data/ground_truth.json"
+  results_dir: "results"
