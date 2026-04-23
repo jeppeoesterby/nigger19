@@ -82,9 +82,17 @@ def create_app(config_path: str = "config.yaml") -> Flask:
             },
         }
         if invoices_dir.exists():
-            info["invoice_count_on_disk"] = len(list(invoices_dir.glob("*.pdf")))
+            info["invoice_count_on_disk"] = sum(
+                1
+                for p in invoices_dir.iterdir()
+                if p.is_file() and p.suffix.lower() in {".pdf", ".xlsx"}
+            )
         if agreements_dir.exists():
-            info["agreement_count_on_disk"] = len(list(agreements_dir.glob("*.xlsx")))
+            info["agreement_count_on_disk"] = sum(
+                1
+                for p in agreements_dir.iterdir()
+                if p.is_file() and p.suffix.lower() in {".pdf", ".xlsx"}
+            )
         if gt_path.exists():
             try:
                 jobs = load_jobs(cfg_yaml, limit=None)
@@ -242,11 +250,11 @@ def create_app(config_path: str = "config.yaml") -> Flask:
         cfg_yaml = _cfg()
         files = request.files.getlist("files")
         saved, skipped = _save_files(
-            files, Path(cfg_yaml["paths"]["invoices_dir"]), {".pdf"}
+            files, Path(cfg_yaml["paths"]["invoices_dir"]), {".pdf", ".xlsx"}
         )
-        msg = f"Uploaded {saved} PDF(s)."
+        msg = f"Uploaded {saved} invoice file(s)."
         if skipped:
-            msg += f" Skipped {skipped} non-PDF file(s)."
+            msg += f" Skipped {skipped} file(s) with unsupported extension (only .pdf, .xlsx)."
         flash(msg)
         return redirect(url_for("index"))
 
@@ -255,11 +263,11 @@ def create_app(config_path: str = "config.yaml") -> Flask:
         cfg_yaml = _cfg()
         files = request.files.getlist("files")
         saved, skipped = _save_files(
-            files, Path(cfg_yaml["paths"]["agreements_dir"]), {".xlsx"}
+            files, Path(cfg_yaml["paths"]["agreements_dir"]), {".pdf", ".xlsx"}
         )
-        msg = f"Uploaded {saved} agreement(s)."
+        msg = f"Uploaded {saved} agreement file(s)."
         if skipped:
-            msg += f" Skipped {skipped} non-xlsx file(s)."
+            msg += f" Skipped {skipped} file(s) with unsupported extension (only .pdf, .xlsx)."
         flash(msg)
         return redirect(url_for("index"))
 
@@ -294,15 +302,19 @@ def create_app(config_path: str = "config.yaml") -> Flask:
         removed = 0
         if what == "invoices":
             d = Path(cfg_yaml["paths"]["invoices_dir"])
-            for p in d.glob("*.pdf"):
-                p.unlink()
-                removed += 1
-            flash(f"Deleted {removed} invoice PDF(s).")
+            if d.exists():
+                for p in d.iterdir():
+                    if p.is_file() and p.suffix.lower() in {".pdf", ".xlsx"}:
+                        p.unlink()
+                        removed += 1
+            flash(f"Deleted {removed} invoice file(s).")
         elif what == "agreements":
             d = Path(cfg_yaml["paths"]["agreements_dir"])
-            for p in d.glob("*.xlsx"):
-                p.unlink()
-                removed += 1
+            if d.exists():
+                for p in d.iterdir():
+                    if p.is_file() and p.suffix.lower() in {".pdf", ".xlsx"}:
+                        p.unlink()
+                        removed += 1
             flash(f"Deleted {removed} agreement file(s).")
         elif what == "ground_truth":
             p = Path(cfg_yaml["paths"]["ground_truth"])

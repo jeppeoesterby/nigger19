@@ -7,28 +7,46 @@
     <div class="stat">
       <div class="label">Invoices on disk</div>
       <div class="value">{{ data_info.invoice_count_on_disk }}</div>
-      <p class="muted">{{ data_info.invoices_dir }}/*.pdf</p>
+      <p class="muted">{{ data_info.invoices_dir }}/*.pdf or *.xlsx</p>
     </div>
     <div class="stat">
       <div class="label">Agreements on disk</div>
       <div class="value">{{ data_info.agreement_count_on_disk }}</div>
-      <p class="muted">{{ data_info.agreements_dir }}/*.xlsx</p>
+      <p class="muted">{{ data_info.agreements_dir }}/*.pdf or *.xlsx</p>
     </div>
     <div class="stat">
-      <div class="label">Ground truth</div>
+      <div class="label">Ground truth (optional)</div>
       <div class="value">
         {% if data_info.ground_truth_exists %}
           <span class="ok">Loaded</span>
         {% else %}
-          <span class="err">Missing</span>
+          <span class="muted">Not uploaded</span>
         {% endif %}
       </div>
-      <p class="muted">{{ data_info.ground_truth_path }}</p>
+      <p class="muted">
+        {% if data_info.ground_truth_exists %}
+          {{ data_info.ground_truth_path }} — automatic scoring enabled
+        {% else %}
+          Without GT: runs in extraction-only mode (verify manually)
+        {% endif %}
+      </p>
     </div>
     <div class="stat">
       <div class="label">Jobs ready</div>
-      <div class="value">{{ data_info.jobs|length }}</div>
-      <p class="muted">PDFs listed in ground truth + found on disk</p>
+      <div class="value">
+        {% if data_info.jobs|length %}
+          {{ data_info.jobs|length }}
+        {% else %}
+          {{ data_info.invoice_count_on_disk }}
+        {% endif %}
+      </div>
+      <p class="muted">
+        {% if data_info.ground_truth_exists %}
+          from ground_truth.json
+        {% else %}
+          all invoice files on disk
+        {% endif %}
+      </p>
     </div>
   </div>
 
@@ -58,11 +76,11 @@
   </p>
   <div class="upload-grid">
     <div class="upload-tile">
-      <h3>Invoice PDFs</h3>
-      <p>One or many. <code>.pdf</code> only.</p>
+      <h3>Invoices</h3>
+      <p>PDF or XLSX. Multiple allowed.</p>
       <form action="{{ url_for('upload_invoices') }}" method="POST" enctype="multipart/form-data">
-        <input type="file" name="files" accept=".pdf" multiple required>
-        <button type="submit">Upload PDFs</button>
+        <input type="file" name="files" accept=".pdf,.xlsx" multiple required>
+        <button type="submit">Upload invoices</button>
       </form>
       {% if data_info.invoice_count_on_disk %}
       <form action="{{ url_for('clear_data') }}" method="POST" style="margin-top: 8px;"
@@ -74,10 +92,10 @@
     </div>
 
     <div class="upload-tile">
-      <h3>Agreements (.xlsx)</h3>
-      <p>Supplier price agreements. <code>.xlsx</code> only.</p>
+      <h3>Price agreements</h3>
+      <p>PDF or XLSX. Multiple allowed.</p>
       <form action="{{ url_for('upload_agreements') }}" method="POST" enctype="multipart/form-data">
-        <input type="file" name="files" accept=".xlsx" multiple required>
+        <input type="file" name="files" accept=".pdf,.xlsx" multiple required>
         <button type="submit">Upload agreements</button>
       </form>
       {% if data_info.agreement_count_on_disk %}
@@ -90,8 +108,8 @@
     </div>
 
     <div class="upload-tile">
-      <h3>ground_truth.json</h3>
-      <p>Single file. Replaces existing.</p>
+      <h3>Ground truth (optional)</h3>
+      <p>JSON file. Skip this if testing manually.</p>
       <form action="{{ url_for('upload_ground_truth') }}" method="POST" enctype="multipart/form-data">
         <input type="file" name="file" accept=".json" required>
         <button type="submit">Upload ground truth</button>

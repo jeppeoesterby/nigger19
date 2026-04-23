@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -35,59 +35,94 @@ log = logging.getLogger(__name__)
 console = Console()
 
 
+SUPPORTED_INVOICE_EXTS = {".pdf", ".xlsx"}
+SUPPORTED_AGREEMENT_EXTS = {".pdf", ".xlsx"}
+
+
 @dataclass
 class InvoiceJob:
     invoice_id: str
-    pdf_path: Path
-    agreement_path: Optional[Path]
-    agreement_text: str
-    ground_truth: dict
+    invoice_path: Path
+    agreement_paths: list[Path] = field(default_factory=list)
+    ground_truth: Optional[dict] = None  # None when no GT provided
 
 
 def load_jobs(cfg: dict, limit: Optional[int]) -> list[InvoiceJob]:
+    """Discover jobs.
+
+    If ground_truth.json exists, it's the source of truth (which invoices, and
+    which agreement each one uses). Otherwise: all files in invoices_dir
+    become jobs and every job gets every agreement as context (manual
+    verification mode).
+    """
     invoices_dir = Path(cfg["paths"]["invoices_dir"])
     agreements_dir = Path(cfg["paths"]["agreements_dir"])
     gt_path = Path(cfg["paths"]["ground_truth"])
 
-    if not gt_path.exists():
-        raise FileNotFoundError(
-            f"Ground truth file not found: {gt_path}. "
-            "Ivan/Marius must provide this. Do not synthesize."
-        )
     if not invoices_dir.exists():
         raise FileNotFoundError(f"Invoices directory not found: {invoices_dir}")
 
-    ground_truth = json.loads(gt_path.read_text(encoding="utf-8"))
+    all_agreements = []
+    if agreements_dir.exists():
+        for ext in SUPPORTED_AGREEMENT_EXTS:
+            all_agreements.extend(sorted(agreements_dir.glob(f"*{ext}")))
 
     jobs: list[InvoiceJob] = []
-    for invoice_id, gt in ground_truth.items():
-        pdf_path = invoices_dir / invoice_id
-        if not pdf_path.exists():
-            log.warning("PDF listed in ground truth but missing on disk: %s", pdf_path)
-            continue
-        agreement_name = gt.get("agreement_file")
-        agreement_path = agreements_dir / agreement_name if agreement_name else None
-        agreement_text = ""
-        if agreement_path and agreement_path.exists():
-            agreement_text = _xlsx_to_text(agreement_path)
-        elif agreement_name:
-            log.warning("Agreement file missing: %s", agreement_path)
-        jobs.append(
-            InvoiceJob(
-                invoice_id=invoice_id,
-                pdf_path=pdf_path,
-                agreement_path=agreement_path,
-                agreement_text=agreement_text,
-                ground_truth=gt,
+
+    if gt_path.exists():
+        ground_truth = json.loads(gt_path.read_text(encoding="utf-8"))
+        for invoice_id, gt in ground_truth.items():
+            invoice_path = invoices_dir / invoice_id
+            if not invoice_path.exists():
+                log.warning(
+                    "Invoice listed in ground truth but missing on disk: %s",
+                    invoice_path,
+                )
+                continue
+            agreement_name = gt.get("agreement_file")
+            agreement_paths: list[Path] = []
+            if agreement_name:
+                ap = agreements_dir / agreement_name
+                if ap.exists():
+                    agreement_paths.append(ap)
+                else:
+                    log.warning("Agreement file missing: %s", ap)
+            jobs.append(
+                InvoiceJob(
+                    invoice_id=invoice_id,
+                    invoice_path=invoice_path,
+                    agreement_paths=agreement_paths,
+                    ground_truth=gt,
+                )
             )
-        )
+    else:
+        # No ground truth: every file in invoices_dir becomes a job, using all
+        # agreements as context. User verifies manually.
+        discovered: list[Path] = []
+        for ext in SUPPORTED_INVOICE_EXTS:
+            discovered.extend(sorted(invoices_dir.glob(f"*{ext}")))
+        if not discovered:
+            raise FileNotFoundError(
+                f"No invoice files found in {invoices_dir} "
+                f"(looking for {sorted(SUPPORTED_INVOICE_EXTS)}). "
+                "Upload some invoices first."
+            )
+        for inv_path in discovered:
+            jobs.append(
+                InvoiceJob(
+                    invoice_id=inv_path.name,
+                    invoice_path=inv_path,
+                    agreement_paths=list(all_agreements),
+                    ground_truth=None,
+                )
+            )
+
     if limit is not None:
         jobs = jobs[:limit]
     return jobs
 
 
 def _xlsx_to_text(path: Path) -> str:
-    """Flatten an .xlsx into plain text for inclusion in the prompt."""
     wb = load_workbook(path, data_only=True, read_only=True)
     out: list[str] = []
     for sheet in wb.worksheets:
@@ -100,8 +135,32 @@ def _xlsx_to_text(path: Path) -> str:
     return "\n".join(out)
 
 
+def _load_invoice_content(path: Path) -> tuple[Optional[bytes], Optional[str]]:
+    """Return (pdf_bytes, xlsx_text). Exactly one is non-None."""
+    ext = path.suffix.lower()
+    if ext == ".pdf":
+        return path.read_bytes(), None
+    if ext == ".xlsx":
+        return None, _xlsx_to_text(path)
+    raise ValueError(f"Unsupported invoice extension: {path}")
+
+
+def _load_agreement_content(
+    paths: list[Path],
+) -> tuple[list[bytes], str]:
+    """Return (list of PDF bytes, concatenated xlsx text)."""
+    pdfs: list[bytes] = []
+    text_parts: list[str] = []
+    for p in paths:
+        ext = p.suffix.lower()
+        if ext == ".pdf":
+            pdfs.append(p.read_bytes())
+        elif ext == ".xlsx":
+            text_parts.append(f"### {p.name}\n{_xlsx_to_text(p)}")
+    return pdfs, "\n\n".join(text_parts)
+
+
 def _validate_model_output(raw_text: str) -> tuple[Optional[dict], Optional[str]]:
-    """Parse JSON and validate against schema. Returns (dict, error)."""
     if not raw_text or not raw_text.strip():
         return None, "empty response"
     try:
@@ -119,24 +178,37 @@ def run_one(
     job: InvoiceJob, cfg: ModelConfig, clients: dict, cfg_yaml: dict
 ) -> dict:
     """Run a single (invoice, config) pair. Always returns a row dict."""
-    pdf_bytes = job.pdf_path.read_bytes()
-    agreement_name = job.ground_truth.get("agreement_file") or "N/A"
+    invoice_pdf, invoice_text = _load_invoice_content(job.invoice_path)
+    agreement_pdfs, agreement_text = _load_agreement_content(job.agreement_paths)
+    has_agreement = bool(agreement_pdfs) or bool(agreement_text)
+
     total_in = total_out = 0
     total_latency = 0.0
-    cost_by_key = 0.0
+    total_cost = 0.0
     notes: list[str] = []
     pred: Optional[dict] = None
 
     if not cfg.is_hybrid:
-        prompt = build_unified_prompt(agreement_name, job.agreement_text)
+        prompt = build_unified_prompt(
+            invoice_text=invoice_text,
+            agreement_text=agreement_text or None,
+            has_invoice_pdf=invoice_pdf is not None,
+            agreement_pdf_count=len(agreement_pdfs),
+            with_agreement=has_agreement,
+        )
+        attachments: list[bytes] = []
+        if invoice_pdf is not None:
+            attachments.append(invoice_pdf)
+        attachments.extend(agreement_pdfs)
+
         client = clients[cfg.extraction.provider]
-        call: ModelCall = client.extract_from_pdf(
-            cfg_yaml["models"][cfg.extraction.model_key], pdf_bytes, prompt
+        call: ModelCall = client.call(
+            cfg_yaml["models"][cfg.extraction.model_key], prompt, attachments
         )
         total_in += call.input_tokens
         total_out += call.output_tokens
         total_latency += call.latency_sec
-        cost_by_key += cost_usd(
+        total_cost += cost_usd(
             cfg.extraction.model_key,
             call.input_tokens,
             call.output_tokens,
@@ -149,16 +221,21 @@ def run_one(
             if err:
                 notes.append(err)
     else:
-        # Stage 1: extraction on Gemini (no agreement)
-        extract_prompt = build_hybrid_extraction_prompt()
+        # Stage 1: extraction (invoice only, no agreement)
+        extract_prompt = build_hybrid_extraction_prompt(
+            invoice_text=invoice_text, has_invoice_pdf=invoice_pdf is not None
+        )
+        extract_attachments = [invoice_pdf] if invoice_pdf is not None else []
         ext_client = clients[cfg.extraction.provider]
-        call1 = ext_client.extract_from_pdf(
-            cfg_yaml["models"][cfg.extraction.model_key], pdf_bytes, extract_prompt
+        call1 = ext_client.call(
+            cfg_yaml["models"][cfg.extraction.model_key],
+            extract_prompt,
+            extract_attachments,
         )
         total_in += call1.input_tokens
         total_out += call1.output_tokens
         total_latency += call1.latency_sec
-        cost_by_key += cost_usd(
+        total_cost += cost_usd(
             cfg.extraction.model_key,
             call1.input_tokens,
             call1.output_tokens,
@@ -166,67 +243,79 @@ def run_one(
         )
         if call1.error:
             notes.append(f"extract error: {call1.error}")
-            pred = None
+            extracted: Optional[dict] = None
         else:
             extracted, err = _validate_model_output(call1.raw_text)
             if err:
                 notes.append(f"extract {err}")
-            if extracted is None:
-                pred = None
-            else:
-                # Stage 2: reasoning on Claude
-                reason_prompt = build_hybrid_reasoning_prompt(
-                    json.dumps(extracted, ensure_ascii=False, indent=2),
-                    agreement_name,
-                    job.agreement_text,
-                )
-                reason_client = clients[cfg.reasoning.provider]
-                call2 = reason_client.reason_text(
-                    cfg_yaml["models"][cfg.reasoning.model_key], reason_prompt
-                )
-                total_in += call2.input_tokens
-                total_out += call2.output_tokens
-                total_latency += call2.latency_sec
-                cost_by_key += cost_usd(
-                    cfg.reasoning.model_key,
-                    call2.input_tokens,
-                    call2.output_tokens,
-                    cfg_yaml["pricing"],
-                )
-                if call2.error:
-                    notes.append(f"reason error: {call2.error}")
-                    pred = extracted  # fall back to extracted-only
-                else:
-                    pred2, err2 = _validate_model_output(call2.raw_text)
-                    if err2:
-                        notes.append(f"reason {err2}")
-                    pred = pred2 if pred2 is not None else extracted
 
-    scores: InvoiceScores = score_invoice(
-        job.ground_truth,
-        pred or {},
-        weights=cfg_yaml["scoring_weights"],
-        scoring_cfg=cfg_yaml["scoring"],
-    )
+        if extracted is None:
+            pred = None
+        elif not has_agreement:
+            # Nothing to reason about; return the extracted result as-is.
+            pred = extracted
+        else:
+            # Stage 2: reasoning
+            reason_prompt = build_hybrid_reasoning_prompt(
+                invoice_json=json.dumps(extracted, ensure_ascii=False, indent=2),
+                agreement_text=agreement_text or None,
+                agreement_pdf_count=len(agreement_pdfs),
+            )
+            reason_client = clients[cfg.reasoning.provider]
+            call2 = reason_client.call(
+                cfg_yaml["models"][cfg.reasoning.model_key],
+                reason_prompt,
+                agreement_pdfs,
+            )
+            total_in += call2.input_tokens
+            total_out += call2.output_tokens
+            total_latency += call2.latency_sec
+            total_cost += cost_usd(
+                cfg.reasoning.model_key,
+                call2.input_tokens,
+                call2.output_tokens,
+                cfg_yaml["pricing"],
+            )
+            if call2.error:
+                notes.append(f"reason error: {call2.error}")
+                pred = extracted
+            else:
+                pred2, err2 = _validate_model_output(call2.raw_text)
+                if err2:
+                    notes.append(f"reason {err2}")
+                pred = pred2 if pred2 is not None else extracted
+
+    # Score only if ground truth is available.
+    scores: Optional[InvoiceScores] = None
+    if job.ground_truth is not None:
+        scores = score_invoice(
+            job.ground_truth,
+            pred or {},
+            weights=cfg_yaml["scoring_weights"],
+            scoring_cfg=cfg_yaml["scoring"],
+        )
 
     return {
         "invoice_id": job.invoice_id,
         "config_name": cfg.name,
-        "field_extraction": scores.field_extraction_pct,
-        "price_match": scores.price_match_pct,
-        "credit_note": scores.credit_note_pct,
-        "rebate": scores.rebate_pct,
-        "composite": scores.composite,
+        "field_extraction": scores.field_extraction_pct if scores else None,
+        "price_match": scores.price_match_pct if scores else None,
+        "credit_note": scores.credit_note_pct if scores else None,
+        "rebate": scores.rebate_pct if scores else None,
+        "composite": scores.composite if scores else None,
         "latency_sec": total_latency,
         "input_tokens": total_in,
         "output_tokens": total_out,
-        "cost_usd": cost_by_key,
+        "cost_usd": total_cost,
         "notes": "; ".join(notes),
         "per_field": [
-            {"field": f.field, "score": f.score} for f in scores.per_field
+            {"field": f.field, "score": f.score}
+            for f in (scores.per_field if scores else [])
         ],
         "pred": pred,
+        "ground_truth": job.ground_truth,
         "failed": pred is None,
+        "has_ground_truth": job.ground_truth is not None,
     }
 
 
@@ -238,29 +327,33 @@ def run(
     dry_run: bool = False,
     progress_callback: Optional[Callable[[dict], None]] = None,
 ) -> Optional[Path]:
-    """Evaluate configs x invoices.
-
-    If `progress_callback` is provided, it is called with event dicts (see
-    _emit_* helpers below) and no Rich UI is rendered. Otherwise the CLI
-    uses Rich for progress display.
-    """
     jobs = load_jobs(cfg_yaml, limit)
     if not jobs:
         raise RuntimeError(
-            "No invoice jobs to run. Check that PDFs referenced in ground_truth.json exist."
+            "No invoice jobs to run. Upload some invoice PDFs or .xlsx files first."
         )
     total = len(jobs) * len(configs)
     use_web = progress_callback is not None
+    has_any_gt = any(j.ground_truth is not None for j in jobs)
 
     def emit(event: dict) -> None:
         if progress_callback is not None:
             progress_callback(event)
 
-    emit({"type": "plan", "jobs": [j.invoice_id for j in jobs], "configs": [c.name for c in configs], "total": total})
+    emit(
+        {
+            "type": "plan",
+            "jobs": [j.invoice_id for j in jobs],
+            "configs": [c.name for c in configs],
+            "total": total,
+            "scoring_enabled": has_any_gt,
+        }
+    )
     if not use_web:
+        mode = "with ground-truth scoring" if has_any_gt else "extraction-only (no GT)"
         console.print(
             f"[bold]Plan:[/bold] {len(jobs)} invoice(s) x {len(configs)} config(s) = "
-            f"{total} total runs."
+            f"{total} total runs ({mode})."
         )
         for c in configs:
             console.print(
@@ -269,7 +362,8 @@ def run(
             )
         console.print("  Invoices:")
         for j in jobs:
-            console.print(f"    - {j.invoice_id}  (agreement: {j.agreement_path or 'none'})")
+            ag = ", ".join(p.name for p in j.agreement_paths) or "none"
+            console.print(f"    - {j.invoice_id}  (agreements: {ag})")
 
     if dry_run:
         emit({"type": "log", "message": "Dry-run: plan validated, no API calls made."})
@@ -280,8 +374,19 @@ def run(
 
     per_invoice_rows: list[dict] = []
     raw_rows: list[dict] = []
-
     emit({"type": "start", "total": total})
+
+    def _record(cfg_name: str, job: InvoiceJob, row: dict) -> None:
+        per_invoice_rows.append(row)
+        raw_rows.append(
+            {
+                "invoice_id": job.invoice_id,
+                "config_name": cfg_name,
+                "ground_truth_json": json_pretty(job.ground_truth) if job.ground_truth else "(no ground truth)",
+                "model_output_json": json_pretty(row.get("pred") or {}),
+                "diff": json_diff(job.ground_truth or {}, row.get("pred") or {}) if job.ground_truth else "(no ground truth — verify manually)",
+            }
+        )
 
     if use_web:
         completed = 0
@@ -296,16 +401,7 @@ def run(
                     }
                 )
                 row = run_one(job, cfg, clients, cfg_yaml)
-                per_invoice_rows.append(row)
-                raw_rows.append(
-                    {
-                        "invoice_id": job.invoice_id,
-                        "config_name": cfg.name,
-                        "ground_truth_json": json_pretty(job.ground_truth),
-                        "model_output_json": json_pretty(row.get("pred") or {}),
-                        "diff": json_diff(job.ground_truth, row.get("pred") or {}),
-                    }
-                )
+                _record(cfg.name, job, row)
                 completed += 1
                 emit(
                     {
@@ -316,6 +412,7 @@ def run(
                         "config_name": cfg.name,
                         "composite": row["composite"],
                         "notes": row["notes"],
+                        "has_ground_truth": row["has_ground_truth"],
                     }
                 )
     else:
@@ -333,28 +430,36 @@ def run(
                 for job in jobs:
                     progress.update(task, description=f"{cfg.name} :: {job.invoice_id}")
                     row = run_one(job, cfg, clients, cfg_yaml)
-                    per_invoice_rows.append(row)
-                    raw_rows.append(
-                        {
-                            "invoice_id": job.invoice_id,
-                            "config_name": cfg.name,
-                            "ground_truth_json": json_pretty(job.ground_truth),
-                            "model_output_json": json_pretty(row.get("pred") or {}),
-                            "diff": json_diff(job.ground_truth, row.get("pred") or {}),
-                        }
-                    )
+                    _record(cfg.name, job, row)
                     progress.advance(task)
 
-    summary_rows = _summarize(per_invoice_rows, configs)
+    summary_rows = _summarize(per_invoice_rows, configs, has_any_gt)
     out_path = build_output_path(cfg_yaml["paths"]["results_dir"])
-    write_report(out_path, summary_rows, per_invoice_rows, raw_rows)
-    emit({"type": "done", "output_path": str(out_path), "summary": summary_rows})
+    write_report(
+        out_path,
+        summary_rows,
+        per_invoice_rows,
+        raw_rows,
+        scoring_enabled=has_any_gt,
+    )
+    emit(
+        {
+            "type": "done",
+            "output_path": str(out_path),
+            "summary": summary_rows,
+            "scoring_enabled": has_any_gt,
+        }
+    )
     if not use_web:
         console.print(f"[green]Wrote[/green] {out_path}")
     return out_path
 
 
-def _summarize(per_invoice_rows: list[dict], configs: list[ModelConfig]) -> list[dict]:
+def _summarize(
+    per_invoice_rows: list[dict],
+    configs: list[ModelConfig],
+    has_any_gt: bool,
+) -> list[dict]:
     summary: list[dict] = []
     for cfg in configs:
         rows = [r for r in per_invoice_rows if r["config_name"] == cfg.name]
@@ -362,16 +467,18 @@ def _summarize(per_invoice_rows: list[dict], configs: list[ModelConfig]) -> list
             continue
         n = len(rows)
         failures = sum(1 for r in rows if r["failed"])
-        scored = [r for r in rows if not r["failed"]] or rows
+        scored = [r for r in rows if not r["failed"] and r["has_ground_truth"]]
         ns = len(scored)
 
-        def _avg(field: str) -> float:
-            return sum(r[field] for r in scored) / ns if ns else 0.0
+        def _avg(field: str) -> Optional[float]:
+            if not ns:
+                return None
+            return sum(r[field] for r in scored) / ns
 
         total_cost = sum(r["cost_usd"] for r in rows)
         total_in = sum(r["input_tokens"] for r in rows)
         total_out = sum(r["output_tokens"] for r in rows)
-        avg_lat = sum(r["latency_sec"] for r in rows) / n
+        avg_lat = sum(r["latency_sec"] for r in rows) / n if n else 0.0
 
         summary.append(
             {
