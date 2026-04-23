@@ -111,7 +111,10 @@ def create_app(config_path: str = "config.yaml") -> Flask:
                 "google": bool(__import__("os").environ.get("GOOGLE_API_KEY")),
             },
             "prompts_customized": not PromptTemplates.load(
-                cfg_yaml.get("paths", {}).get("prompts_file", "data/prompts.json")
+                cfg_yaml.get("paths", {}).get(
+                    "prompts_file",
+                    str(Path(app.config["BASE_DIR"]) / "data" / "prompts.json"),
+                )
             ).is_default(),
         }
         if invoices_dir.exists():
@@ -152,7 +155,11 @@ def create_app(config_path: str = "config.yaml") -> Flask:
                 info["jobs"] = [
                     {
                         "id": j.invoice_id,
-                        "agreement": j.agreement_path.name if j.agreement_path else None,
+                        "agreement": (
+                            ", ".join(p.name for p in j.agreement_paths)
+                            if j.agreement_paths
+                            else None
+                        ),
                     }
                     for j in jobs
                 ]
@@ -273,7 +280,8 @@ def create_app(config_path: str = "config.yaml") -> Flask:
     # ---------------- prompt editing ----------------
 
     def _prompts_path() -> Path:
-        return Path(_cfg().get("paths", {}).get("prompts_file", "data/prompts.json"))
+        default = str(Path(app.config["BASE_DIR"]) / "data" / "prompts.json")
+        return Path(_cfg().get("paths", {}).get("prompts_file", default))
 
     @app.route("/prompts", methods=["GET"])
     def prompts_page():

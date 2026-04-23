@@ -42,6 +42,10 @@ api:
   timeout_sec: 300
   retries: 3
   retry_backoff_sec: 4
+  # How many (invoice, config) pairs to process in parallel. Each uses one
+  # model API call (or two for hybrid). Pick a value that respects your rate
+  # limits. 1 = old sequential behavior; 6 is a safe speedup for most tiers.
+  parallelism: 6
 
 paths:
   invoices_dir: "data/invoices"

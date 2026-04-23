@@ -7,12 +7,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class LineItem(BaseModel):
+    # All optional. Models return partial line items often (missing line_total,
+    # quantity as string, etc.); we prefer to keep the data and score on what's
+    # there rather than fail the whole invoice over one bad field.
     model_config = ConfigDict(extra="ignore")
 
-    description: str
-    quantity: float
-    unit_price: float
-    line_total: float
+    description: Optional[str] = None
+    quantity: Optional[float] = None
+    unit_price: Optional[float] = None
+    line_total: Optional[float] = None
     agreed_unit_price: Optional[float] = None
     has_discrepancy: Optional[bool] = None
     discrepancy_amount: Optional[float] = None
@@ -21,8 +24,10 @@ class LineItem(BaseModel):
 class CreditNoteHandling(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    is_credit_note: bool
-    sign_convention: Literal["negative", "positive"]
+    is_credit_note: Optional[bool] = None
+    # Not a Literal: accept free-form so "negativ"/"neg"/etc. don't blow up
+    # validation. Scorer normalizes for comparison.
+    sign_convention: Optional[str] = None
     references_invoice: Optional[str] = None
 
 

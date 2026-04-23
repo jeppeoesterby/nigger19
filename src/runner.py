@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -365,7 +367,11 @@ def run(
     has_any_gt = any(j.ground_truth is not None for j in jobs)
 
     # Snapshot prompt templates at run start so mid-run edits don't mix.
-    prompts_path = cfg_yaml.get("paths", {}).get("prompts_file", "data/prompts.json")
+    paths = cfg_yaml.get("paths", {})
+    default_prompts = str(
+        Path(paths.get("invoices_dir", "data/invoices")).parent / "prompts.json"
+    )
+    prompts_path = paths.get("prompts_file", default_prompts)
     templates = PromptTemplates.load(prompts_path)
 
     def emit(event: dict) -> None:
@@ -448,27 +454,44 @@ def run(
                 "_traceback": tb,
             }
 
+    parallelism = max(1, int(cfg_yaml.get("api", {}).get("parallelism", 1) or 1))
+    pairs = [(cfg, job) for cfg in configs for job in jobs]
+    record_lock = threading.Lock()
+    counter = {"n": 0}
+
+    def _do(pair: tuple[ModelConfig, InvoiceJob]) -> tuple[ModelConfig, InvoiceJob, dict]:
+        cfg, job = pair
+        row = _safe_run_one(job, cfg)
+        return cfg, job, row
+
     if use_web:
-        completed = 0
-        for cfg in configs:
-            for job in jobs:
+        with ThreadPoolExecutor(max_workers=parallelism) as pool:
+            futures = [pool.submit(_do, p) for p in pairs]
+            for fut in as_completed(futures):
+                cfg, job, row = fut.result()
+                with record_lock:
+                    _record(cfg.name, job, row)
+                    counter["n"] += 1
+                    completed_n = counter["n"]
+                if row.get("_traceback"):
+                    emit(
+                        {
+                            "type": "log",
+                            "message": f"TRACEBACK {cfg.name} :: {job.invoice_id}\n{row['_traceback']}",
+                        }
+                    )
                 emit(
                     {
                         "type": "progress",
-                        "completed": completed,
+                        "completed": completed_n,
                         "total": total,
                         "current": f"{cfg.name} :: {job.invoice_id}",
                     }
                 )
-                row = _safe_run_one(job, cfg)
-                _record(cfg.name, job, row)
-                completed += 1
-                if row.get("_traceback"):
-                    emit({"type": "log", "message": f"TRACEBACK {cfg.name} :: {job.invoice_id}\n{row['_traceback']}"})
                 emit(
                     {
                         "type": "completed",
-                        "completed": completed,
+                        "completed": completed_n,
                         "total": total,
                         "invoice_id": job.invoice_id,
                         "config_name": cfg.name,
@@ -488,11 +511,13 @@ def run(
             console=console,
         ) as progress:
             task = progress.add_task("Evaluating", total=total)
-            for cfg in configs:
-                for job in jobs:
+            with ThreadPoolExecutor(max_workers=parallelism) as pool:
+                futures = [pool.submit(_do, p) for p in pairs]
+                for fut in as_completed(futures):
+                    cfg, job, row = fut.result()
+                    with record_lock:
+                        _record(cfg.name, job, row)
                     progress.update(task, description=f"{cfg.name} :: {job.invoice_id}")
-                    row = _safe_run_one(job, cfg)
-                    _record(cfg.name, job, row)
                     progress.advance(task)
 
     summary_rows = _summarize(per_invoice_rows, configs, has_any_gt)

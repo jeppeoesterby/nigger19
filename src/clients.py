@@ -12,12 +12,54 @@ from typing import Optional, Sequence
 
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
 
 log = logging.getLogger(__name__)
+
+
+def _is_retriable(exc: BaseException) -> bool:
+    """Retry only on transient failures: rate limits, timeouts, 5xx, network
+    errors. Never retry on 4xx client errors (wrong model, bad key, bad
+    request) — those are configuration bugs that retrying can't fix."""
+    name = type(exc).__name__
+    msg = str(exc).lower()
+    # Non-retriable signals anywhere in the class name or message.
+    non_retriable_markers = (
+        "notfound",
+        "not_found",
+        "permission",
+        "unauthor",
+        "authentic",
+        "badrequest",
+        "bad_request",
+        "invalidargument",
+        "invalid_argument",
+        "unprocessable",
+    )
+    if any(m in name.lower() for m in non_retriable_markers):
+        return False
+    if any(m in msg for m in ("404", "401", "403", "400", "422")):
+        return False
+    # Retriable signals.
+    retriable_markers = (
+        "ratelimit",
+        "rate_limit",
+        "timeout",
+        "connection",
+        "unavailable",
+        "internalserver",
+        "apiconnection",
+        "apitimeout",
+    )
+    if any(m in name.lower() for m in retriable_markers):
+        return True
+    if any(m in msg for m in ("429", "500", "502", "503", "504", "timeout", "temporarily")):
+        return True
+    # Unknown -> retry once. `stop_after_attempt(3)` still caps us.
+    return True
 
 
 @dataclass
@@ -96,7 +138,7 @@ class ClaudeClient:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=2, max=30),
-        retry=retry_if_exception_type(Exception),
+        retry=retry_if_exception(_is_retriable),
         reraise=True,
     )
     def _raw_call(
@@ -164,7 +206,7 @@ class GeminiClient:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=2, max=30),
-        retry=retry_if_exception_type(Exception),
+        retry=retry_if_exception(_is_retriable),
         reraise=True,
     )
     def _raw_call(
