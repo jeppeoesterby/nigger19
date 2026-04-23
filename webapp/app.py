@@ -35,6 +35,7 @@ from werkzeug.utils import secure_filename
 
 from src.clients import build_clients
 from src.configs import CONFIGS, filter_configs
+from src.prompts import TEMPLATE_FIELDS, PromptTemplates
 from src.runner import load_jobs, run
 
 log = logging.getLogger(__name__)
@@ -80,6 +81,9 @@ def create_app(config_path: str = "config.yaml") -> Flask:
                 "anthropic": bool(__import__("os").environ.get("ANTHROPIC_API_KEY")),
                 "google": bool(__import__("os").environ.get("GOOGLE_API_KEY")),
             },
+            "prompts_customized": not PromptTemplates.load(
+                cfg_yaml.get("paths", {}).get("prompts_file", "data/prompts.json")
+            ).is_default(),
         }
         if invoices_dir.exists():
             info["invoice_count_on_disk"] = sum(
@@ -216,6 +220,42 @@ def create_app(config_path: str = "config.yaml") -> Flask:
         return render_template(
             "results.html", past_results=_list_past_results(cfg_yaml)
         )
+
+    # ---------------- prompt editing ----------------
+
+    def _prompts_path() -> Path:
+        return Path(_cfg().get("paths", {}).get("prompts_file", "data/prompts.json"))
+
+    @app.route("/prompts", methods=["GET"])
+    def prompts_page():
+        templates = PromptTemplates.load(_prompts_path())
+        return render_template(
+            "prompts.html",
+            templates=templates,
+            defaults=PromptTemplates.defaults(),
+            is_default=templates.is_default(),
+        )
+
+    @app.route("/prompts", methods=["POST"])
+    def save_prompts():
+        templates = PromptTemplates.defaults()
+        for f in TEMPLATE_FIELDS:
+            val = request.form.get(f, "").strip()
+            if val:
+                setattr(templates, f, val)
+        templates.save(_prompts_path())
+        flash("Prompts saved. Will be used for the next run.")
+        return redirect(url_for("prompts_page"))
+
+    @app.route("/prompts/reset", methods=["POST"])
+    def reset_prompts():
+        p = _prompts_path()
+        if p.exists():
+            p.unlink()
+        flash("Prompts reset to defaults.")
+        return redirect(url_for("prompts_page"))
+
+    # ---------------- results download ----------------
 
     @app.route("/results/<path:filename>")
     def download_result(filename: str):

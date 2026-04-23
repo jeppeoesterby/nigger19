@@ -25,6 +25,7 @@ from .configs import ModelConfig
 from .excel_writer import build_output_path, json_diff, json_pretty, write_report
 from .pricing import cost_usd
 from .prompts import (
+    PromptTemplates,
     build_hybrid_extraction_prompt,
     build_hybrid_reasoning_prompt,
     build_unified_prompt,
@@ -191,7 +192,11 @@ def _lat(v) -> float:
 
 
 def run_one(
-    job: InvoiceJob, cfg: ModelConfig, clients: dict, cfg_yaml: dict
+    job: InvoiceJob,
+    cfg: ModelConfig,
+    clients: dict,
+    cfg_yaml: dict,
+    templates: Optional[PromptTemplates] = None,
 ) -> dict:
     """Run a single (invoice, config) pair. Always returns a row dict."""
     invoice_pdf, invoice_text = _load_invoice_content(job.invoice_path)
@@ -223,6 +228,7 @@ def run_one(
             has_invoice_pdf=invoice_pdf is not None,
             agreement_pdf_count=len(agreement_pdfs),
             with_agreement=has_agreement,
+            templates=templates,
         )
         attachments: list[bytes] = []
         if invoice_pdf is not None:
@@ -243,7 +249,9 @@ def run_one(
     else:
         # Stage 1: extraction (invoice only, no agreement)
         extract_prompt = build_hybrid_extraction_prompt(
-            invoice_text=invoice_text, has_invoice_pdf=invoice_pdf is not None
+            invoice_text=invoice_text,
+            has_invoice_pdf=invoice_pdf is not None,
+            templates=templates,
         )
         extract_attachments = [invoice_pdf] if invoice_pdf is not None else []
         ext_client = clients[cfg.extraction.provider]
@@ -272,6 +280,7 @@ def run_one(
                 invoice_json=json.dumps(extracted, ensure_ascii=False, indent=2),
                 agreement_text=agreement_text or None,
                 agreement_pdf_count=len(agreement_pdfs),
+                templates=templates,
             )
             reason_client = clients[cfg.reasoning.provider]
             call2 = reason_client.call(
@@ -340,6 +349,10 @@ def run(
     use_web = progress_callback is not None
     has_any_gt = any(j.ground_truth is not None for j in jobs)
 
+    # Snapshot prompt templates at run start so mid-run edits don't mix.
+    prompts_path = cfg_yaml.get("paths", {}).get("prompts_file", "data/prompts.json")
+    templates = PromptTemplates.load(prompts_path)
+
     def emit(event: dict) -> None:
         if progress_callback is not None:
             progress_callback(event)
@@ -395,7 +408,7 @@ def run(
     def _safe_run_one(job: InvoiceJob, cfg: ModelConfig) -> dict:
         """Never raises. On any exception, returns a failure row so the batch continues."""
         try:
-            return run_one(job, cfg, clients, cfg_yaml)
+            return run_one(job, cfg, clients, cfg_yaml, templates=templates)
         except Exception as e:
             tb = traceback.format_exc()
             log.exception("run_one failed for %s :: %s", cfg.name, job.invoice_id)

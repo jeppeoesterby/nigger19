@@ -1,15 +1,27 @@
-"""Prompt assembly. Prompts are built dynamically based on what's available
-for each job: invoice may be PDF (attached) or XLSX (text inline); agreements
-may be PDFs (attached) or XLSX (text inline); any mix is allowed."""
+"""Prompt assembly with user-editable templates.
+
+Prompts are built from four template blocks plus mechanical glue (which
+invoice/agreement inputs are attached vs. inline). The template blocks live
+at ``paths.prompts_file`` (JSON on disk) so Ivan can tune wording from the
+web UI without touching code. Missing or empty blocks fall back to defaults.
+"""
 from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Optional
 
 from .schema import SCHEMA_JSON_EXAMPLE
 
 
-INTRO = """You are an invoice auditor for DiFacto, a Danish B2B SaaS that audits
+# ---- Default template blocks ------------------------------------------------
+
+DEFAULT_INTRO = """You are an invoice auditor for DiFacto, a Danish B2B SaaS that audits
 supplier invoices in the construction industry against pre-negotiated price agreements."""
 
-INSTRUCTIONS_EXTRACTION_ONLY = """Instructions:
+
+DEFAULT_INSTRUCTIONS_EXTRACTION_ONLY = """Instructions:
 1. Extract all fields from the invoice. Danish text. Amounts may use "1.234,56" or "1234.56".
 2. Classify document_type as "invoice" or "credit_note" (kreditnota).
 3. For credit notes, populate credit_note_handling with is_credit_note, sign_convention,
@@ -26,7 +38,7 @@ Output strictly-valid JSON matching this schema (no prose, no code fences):
 Dates: ISO 8601 (YYYY-MM-DD). Numbers: plain numeric. Currency: ISO 4217. Null unknowns. Do not invent."""
 
 
-INSTRUCTIONS_WITH_AGREEMENT = """Instructions:
+DEFAULT_INSTRUCTIONS_WITH_AGREEMENT = """Instructions:
 1. Read the invoice. Danish text. Amounts may use "1.234,56" or "1234.56".
 2. Classify document_type as "invoice" or "credit_note" (kreditnota).
    - A credit note reverses a prior invoice. If this is one, populate
@@ -48,7 +60,7 @@ Output strictly-valid JSON matching this schema (no prose, no code fences):
 Dates: ISO 8601 (YYYY-MM-DD). Numbers: plain numeric. Currency: ISO 4217. Null unknowns. Do not invent."""
 
 
-REASONING_INSTRUCTIONS = """Instructions:
+DEFAULT_REASONING_INSTRUCTIONS = """Instructions:
 1. Keep the extracted fields as-is. Do not change supplier_name, invoice_number,
    invoice_date, document_type, currency, subtotal, vat, total, rebate_applied,
    or credit_note_handling.
@@ -63,6 +75,72 @@ Output the full enriched invoice as strictly-valid JSON matching this schema:
 {schema}"""
 
 
+# ---- Template storage -------------------------------------------------------
+
+TEMPLATE_FIELDS = (
+    "intro",
+    "instructions_extraction_only",
+    "instructions_with_agreement",
+    "reasoning_instructions",
+)
+
+
+@dataclass
+class PromptTemplates:
+    intro: str = DEFAULT_INTRO
+    instructions_extraction_only: str = DEFAULT_INSTRUCTIONS_EXTRACTION_ONLY
+    instructions_with_agreement: str = DEFAULT_INSTRUCTIONS_WITH_AGREEMENT
+    reasoning_instructions: str = DEFAULT_REASONING_INSTRUCTIONS
+
+    @classmethod
+    def defaults(cls) -> "PromptTemplates":
+        return cls()
+
+    @classmethod
+    def load(cls, path: str | Path) -> "PromptTemplates":
+        """Load templates from disk. Missing file / missing fields -> defaults."""
+        p = Path(path)
+        if not p.exists():
+            return cls()
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return cls()
+        if not isinstance(data, dict):
+            return cls()
+        d = cls()
+        for f in TEMPLATE_FIELDS:
+            v = data.get(f)
+            if isinstance(v, str) and v.strip():
+                setattr(d, f, v)
+        return d
+
+    def save(self, path: str | Path) -> None:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            json.dumps(asdict(self), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def is_default(self) -> bool:
+        return (
+            self.intro == DEFAULT_INTRO
+            and self.instructions_extraction_only == DEFAULT_INSTRUCTIONS_EXTRACTION_ONLY
+            and self.instructions_with_agreement == DEFAULT_INSTRUCTIONS_WITH_AGREEMENT
+            and self.reasoning_instructions == DEFAULT_REASONING_INSTRUCTIONS
+        )
+
+
+# ---- Prompt assembly --------------------------------------------------------
+
+
+def _replace_schema(text: str) -> str:
+    """Substitute {schema} -> the JSON schema example. Use .replace (not .format)
+    so user text with other curly braces doesn't break."""
+    return text.replace("{schema}", SCHEMA_JSON_EXAMPLE)
+
+
 def _section(name: str, body: str) -> str:
     return f"---BEGIN {name}---\n{body}\n---END {name}---"
 
@@ -74,14 +152,10 @@ def build_unified_prompt(
     has_invoice_pdf: bool,
     agreement_pdf_count: int,
     with_agreement: bool,
+    templates: Optional[PromptTemplates] = None,
 ) -> str:
-    """Full extraction + audit prompt for pure-model configs.
-
-    Any combination of attached PDFs and inline text is supported. If
-    `with_agreement` is False (no agreements available), we ask for extraction
-    only and skip discrepancy/rebate reasoning.
-    """
-    parts = [INTRO]
+    t = templates or PromptTemplates()
+    parts = [t.intro]
 
     if has_invoice_pdf and invoice_text:
         parts.append(
@@ -112,21 +186,24 @@ def build_unified_prompt(
         elif agreement_text:
             parts.append(_section("AGREEMENT DATA", agreement_text))
 
-        parts.append(INSTRUCTIONS_WITH_AGREEMENT.format(schema=SCHEMA_JSON_EXAMPLE))
+        parts.append(_replace_schema(t.instructions_with_agreement))
     else:
         parts.append(
             "No price agreement is provided. Extract invoice fields only."
         )
-        parts.append(INSTRUCTIONS_EXTRACTION_ONLY.format(schema=SCHEMA_JSON_EXAMPLE))
+        parts.append(_replace_schema(t.instructions_extraction_only))
 
     return "\n\n".join(parts)
 
 
 def build_hybrid_extraction_prompt(
-    invoice_text: str | None, *, has_invoice_pdf: bool
+    invoice_text: str | None,
+    *,
+    has_invoice_pdf: bool,
+    templates: Optional[PromptTemplates] = None,
 ) -> str:
-    """Step 1 of hybrid: Gemini extracts invoice fields only, no agreement."""
-    parts = [INTRO]
+    t = templates or PromptTemplates()
+    parts = [t.intro]
     if has_invoice_pdf and invoice_text:
         parts.append(
             "Invoice is provided as attached PDF plus extracted spreadsheet text below."
@@ -137,7 +214,7 @@ def build_hybrid_extraction_prompt(
     elif invoice_text:
         parts.append("The invoice is provided as extracted spreadsheet text.")
         parts.append(_section("INVOICE SPREADSHEET TEXT", invoice_text))
-    parts.append(INSTRUCTIONS_EXTRACTION_ONLY.format(schema=SCHEMA_JSON_EXAMPLE))
+    parts.append(_replace_schema(t.instructions_extraction_only))
     return "\n\n".join(parts)
 
 
@@ -146,9 +223,10 @@ def build_hybrid_reasoning_prompt(
     agreement_text: str | None,
     *,
     agreement_pdf_count: int,
+    templates: Optional[PromptTemplates] = None,
 ) -> str:
-    """Step 2 of hybrid: Claude does price-match + rebate reasoning."""
-    parts = [INTRO]
+    t = templates or PromptTemplates()
+    parts = [t.intro]
     parts.append(_section("EXTRACTED INVOICE JSON", invoice_json))
     if agreement_pdf_count and agreement_text:
         parts.append(
@@ -164,5 +242,5 @@ def build_hybrid_reasoning_prompt(
         parts.append(
             "No agreement data provided. Leave agreement-related fields null."
         )
-    parts.append(REASONING_INSTRUCTIONS.format(schema=SCHEMA_JSON_EXAMPLE))
+    parts.append(_replace_schema(t.reasoning_instructions))
     return "\n\n".join(parts)

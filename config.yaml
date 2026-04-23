@@ -48,3 +48,4 @@ paths:
   agreements_dir: "data/agreements"
   ground_truth: "data/ground_truth.json"
   results_dir: "results"
+  prompts_file: "data/prompts.json"

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Prompts — DiFacto LLM Eval{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>
+    Prompt templates
+    {% if is_default %}
+      <span class="badge" style="background: var(--panel-2); color: var(--muted);">default</span>
+    {% else %}
+      <span class="badge" style="background: var(--warn); color: #422006;">customized</span>
+    {% endif %}
+  </h2>
+  <p class="muted">
+    These templates are used to build the full prompt sent to each model.
+    Changes are saved to disk and used for the <strong>next</strong> run
+    (in-flight runs keep the version they started with). Use
+    <code>{{ '{schema}' }}</code> where you want the JSON output schema
+    example to be inserted — it's replaced at send time.
+  </p>
+  <p class="muted">
+    The four blocks combine with mechanical glue (which PDFs are attached, which
+    spreadsheet text is inlined) that you do NOT edit here. If you leave a block
+    blank and save, it falls back to the default.
+  </p>
+</div>
+
+<form method="POST" action="{{ url_for('save_prompts') }}">
+
+  <div class="card">
+    <h2>Intro</h2>
+    <p class="muted">Opening sentence(s). Used at the top of every prompt (pure and hybrid).</p>
+    <textarea name="intro" rows="4" style="width: 100%; font-family: monospace; font-size: 13px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 10px;">{{ templates.intro }}</textarea>
+    <details style="margin-top: 8px;">
+      <summary class="muted" style="cursor: pointer; font-size: 12px;">show default</summary>
+      <pre style="margin-top: 6px; font-size: 11px;">{{ defaults.intro }}</pre>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2>Instructions — with agreement (pure configs)</h2>
+    <p class="muted">
+      Used when the run has both an invoice AND at least one price agreement.
+      The model is expected to extract <em>and</em> check for discrepancies.
+      Include <code>{{ '{schema}' }}</code> where the JSON schema should appear.
+    </p>
+    <textarea name="instructions_with_agreement" rows="14" style="width: 100%; font-family: monospace; font-size: 13px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 10px;">{{ templates.instructions_with_agreement }}</textarea>
+    <details style="margin-top: 8px;">
+      <summary class="muted" style="cursor: pointer; font-size: 12px;">show default</summary>
+      <pre style="margin-top: 6px; font-size: 11px; white-space: pre-wrap;">{{ defaults.instructions_with_agreement }}</pre>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2>Instructions — extraction only (no agreement)</h2>
+    <p class="muted">
+      Used when no agreement is uploaded. Also used as stage 1 of hybrid configs
+      (Gemini extracts fields; Claude reasons in a second call).
+    </p>
+    <textarea name="instructions_extraction_only" rows="12" style="width: 100%; font-family: monospace; font-size: 13px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 10px;">{{ templates.instructions_extraction_only }}</textarea>
+    <details style="margin-top: 8px;">
+      <summary class="muted" style="cursor: pointer; font-size: 12px;">show default</summary>
+      <pre style="margin-top: 6px; font-size: 11px; white-space: pre-wrap;">{{ defaults.instructions_extraction_only }}</pre>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2>Reasoning — stage 2 of hybrid configs</h2>
+    <p class="muted">
+      Used only by Hybrid Sonnet / Hybrid Opus, in the second call where Claude
+      receives the extracted JSON + the agreement and produces the final
+      audited output.
+    </p>
+    <textarea name="reasoning_instructions" rows="10" style="width: 100%; font-family: monospace; font-size: 13px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 10px;">{{ templates.reasoning_instructions }}</textarea>
+    <details style="margin-top: 8px;">
+      <summary class="muted" style="cursor: pointer; font-size: 12px;">show default</summary>
+      <pre style="margin-top: 6px; font-size: 11px; white-space: pre-wrap;">{{ defaults.reasoning_instructions }}</pre>
+    </details>
+  </div>
+
+  <div class="card" style="display: flex; gap: 12px; align-items: center;">
+    <button type="submit">Save prompts</button>
+    <a href="{{ url_for('index') }}" class="btn secondary">Cancel</a>
+  </div>
+</form>
+
+<form method="POST" action="{{ url_for('reset_prompts') }}"
+      onsubmit="return confirm('Reset all four prompt blocks to defaults?');">
+  <div class="card">
+    <h2>Reset</h2>
+    <p class="muted">Discards any customizations and restores all defaults.</p>
+    <button type="submit" class="danger-btn">Reset to defaults</button>
+  </div>
+</form>
+
+{% endblock %}

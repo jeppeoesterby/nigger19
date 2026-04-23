@@ -63,6 +63,14 @@
     <span class="{% if data_info.keys_configured.google %}ok{% else %}err{% endif %}">
       Google {{ "OK" if data_info.keys_configured.google else "missing" }}
     </span>
+    &nbsp;&nbsp;
+    <span class="muted">Prompts:</span>
+    {% if data_info.prompts_customized %}
+      <span class="warn">customized</span>
+    {% else %}
+      <span class="muted">default</span>
+    {% endif %}
+    <a href="{{ url_for('prompts_page') }}" style="font-size: 12px; margin-left: 6px;">edit</a>
   </div>
 </div>
 
