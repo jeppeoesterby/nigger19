@@ -166,12 +166,40 @@ class ClaudeClient:
             messages=[{"role": "user", "content": content}],
         )
         latency = time.perf_counter() - t0
+
+        blocks = list(getattr(msg, "content", []) or [])
         text = "".join(
-            b.text for b in msg.content if getattr(b, "type", None) == "text"
+            b.text for b in blocks if getattr(b, "type", None) == "text"
         )
         usage = getattr(msg, "usage", None)
         in_tok = _safe_int(getattr(usage, "input_tokens", 0)) if usage else 0
         out_tok = _safe_int(getattr(usage, "output_tokens", 0)) if usage else 0
+
+        # If we got no text, attach diagnostic metadata so the user can see
+        # WHY the response was empty (stop_reason, block types, etc.) in
+        # the Excel raw_response column.
+        if not text.strip():
+            stop_reason = getattr(msg, "stop_reason", None)
+            stop_sequence = getattr(msg, "stop_sequence", None)
+            block_types = [getattr(b, "type", "?") for b in blocks]
+            # Non-text blocks sometimes carry explanation (tool_use, thinking,
+            # etc.). Dump their repr so we can see them.
+            non_text_preview = []
+            for b in blocks:
+                if getattr(b, "type", None) != "text":
+                    try:
+                        non_text_preview.append(repr(b)[:500])
+                    except Exception:
+                        non_text_preview.append(f"<{type(b).__name__}>")
+            text = (
+                f"[EMPTY RESPONSE DEBUG] model={model}  "
+                f"stop_reason={stop_reason!r}  stop_sequence={stop_sequence!r}  "
+                f"input_tokens={in_tok}  output_tokens={out_tok}  "
+                f"content_blocks={block_types}"
+            )
+            if non_text_preview:
+                text += "\nNon-text blocks:\n" + "\n".join(non_text_preview)
+
         return ModelCall(
             raw_text=text,
             latency_sec=float(latency),
@@ -231,6 +259,38 @@ class GeminiClient:
         latency = time.perf_counter() - t0
         text = resp.text or ""
         in_tok, out_tok = _gemini_usage(resp)
+
+        if not text.strip():
+            # Pull diagnostic metadata from the candidates list.
+            finish_reasons = []
+            safety_notes: list[str] = []
+            block_reason = None
+            try:
+                candidates = getattr(resp, "candidates", None) or []
+                for c in candidates:
+                    fr = getattr(c, "finish_reason", None)
+                    if fr is not None:
+                        finish_reasons.append(str(fr))
+                    sr = getattr(c, "safety_ratings", None) or []
+                    for s in sr:
+                        cat = getattr(s, "category", None)
+                        prob = getattr(s, "probability", None)
+                        if cat is not None:
+                            safety_notes.append(f"{cat}={prob}")
+                pf = getattr(resp, "prompt_feedback", None)
+                if pf is not None:
+                    block_reason = getattr(pf, "block_reason", None)
+            except Exception as e:  # diagnostics must never raise
+                finish_reasons.append(f"(diag error: {e})")
+            text = (
+                f"[EMPTY RESPONSE DEBUG] model={model}  "
+                f"finish_reasons={finish_reasons}  "
+                f"prompt_block_reason={block_reason!r}  "
+                f"input_tokens={in_tok}  output_tokens={out_tok}"
+            )
+            if safety_notes:
+                text += "\nSafety ratings: " + ", ".join(safety_notes)
+
         return ModelCall(
             raw_text=text,
             latency_sec=float(latency),
