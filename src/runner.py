@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -174,6 +175,21 @@ def _validate_model_output(raw_text: str) -> tuple[Optional[dict], Optional[str]
     return validated.model_dump(mode="json"), None
 
 
+def _tok(n) -> int:
+    """Defensive int coercion for token counts from SDK responses."""
+    try:
+        return int(n) if n is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _lat(v) -> float:
+    try:
+        return float(v) if v is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def run_one(
     job: InvoiceJob, cfg: ModelConfig, clients: dict, cfg_yaml: dict
 ) -> dict:
@@ -187,6 +203,18 @@ def run_one(
     total_cost = 0.0
     notes: list[str] = []
     pred: Optional[dict] = None
+
+    def _accumulate(call: ModelCall, model_key: str) -> None:
+        nonlocal total_in, total_out, total_latency, total_cost
+        total_in += _tok(call.input_tokens)
+        total_out += _tok(call.output_tokens)
+        total_latency += _lat(call.latency_sec)
+        total_cost += cost_usd(
+            model_key,
+            _tok(call.input_tokens),
+            _tok(call.output_tokens),
+            cfg_yaml["pricing"],
+        )
 
     if not cfg.is_hybrid:
         prompt = build_unified_prompt(
@@ -205,15 +233,7 @@ def run_one(
         call: ModelCall = client.call(
             cfg_yaml["models"][cfg.extraction.model_key], prompt, attachments
         )
-        total_in += call.input_tokens
-        total_out += call.output_tokens
-        total_latency += call.latency_sec
-        total_cost += cost_usd(
-            cfg.extraction.model_key,
-            call.input_tokens,
-            call.output_tokens,
-            cfg_yaml["pricing"],
-        )
+        _accumulate(call, cfg.extraction.model_key)
         if call.error:
             notes.append(f"extract error: {call.error}")
         else:
@@ -232,15 +252,7 @@ def run_one(
             extract_prompt,
             extract_attachments,
         )
-        total_in += call1.input_tokens
-        total_out += call1.output_tokens
-        total_latency += call1.latency_sec
-        total_cost += cost_usd(
-            cfg.extraction.model_key,
-            call1.input_tokens,
-            call1.output_tokens,
-            cfg_yaml["pricing"],
-        )
+        _accumulate(call1, cfg.extraction.model_key)
         if call1.error:
             notes.append(f"extract error: {call1.error}")
             extracted: Optional[dict] = None
@@ -267,15 +279,7 @@ def run_one(
                 reason_prompt,
                 agreement_pdfs,
             )
-            total_in += call2.input_tokens
-            total_out += call2.output_tokens
-            total_latency += call2.latency_sec
-            total_cost += cost_usd(
-                cfg.reasoning.model_key,
-                call2.input_tokens,
-                call2.output_tokens,
-                cfg_yaml["pricing"],
-            )
+            _accumulate(call2, cfg.reasoning.model_key)
             if call2.error:
                 notes.append(f"reason error: {call2.error}")
                 pred = extracted
@@ -388,6 +392,34 @@ def run(
             }
         )
 
+    def _safe_run_one(job: InvoiceJob, cfg: ModelConfig) -> dict:
+        """Never raises. On any exception, returns a failure row so the batch continues."""
+        try:
+            return run_one(job, cfg, clients, cfg_yaml)
+        except Exception as e:
+            tb = traceback.format_exc()
+            log.exception("run_one failed for %s :: %s", cfg.name, job.invoice_id)
+            return {
+                "invoice_id": job.invoice_id,
+                "config_name": cfg.name,
+                "field_extraction": None,
+                "price_match": None,
+                "credit_note": None,
+                "rebate": None,
+                "composite": None,
+                "latency_sec": 0.0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cost_usd": 0.0,
+                "notes": f"internal error: {type(e).__name__}: {e}",
+                "per_field": [],
+                "pred": None,
+                "ground_truth": job.ground_truth,
+                "failed": True,
+                "has_ground_truth": job.ground_truth is not None,
+                "_traceback": tb,
+            }
+
     if use_web:
         completed = 0
         for cfg in configs:
@@ -400,9 +432,11 @@ def run(
                         "current": f"{cfg.name} :: {job.invoice_id}",
                     }
                 )
-                row = run_one(job, cfg, clients, cfg_yaml)
+                row = _safe_run_one(job, cfg)
                 _record(cfg.name, job, row)
                 completed += 1
+                if row.get("_traceback"):
+                    emit({"type": "log", "message": f"TRACEBACK {cfg.name} :: {job.invoice_id}\n{row['_traceback']}"})
                 emit(
                     {
                         "type": "completed",
@@ -429,7 +463,7 @@ def run(
             for cfg in configs:
                 for job in jobs:
                     progress.update(task, description=f"{cfg.name} :: {job.invoice_id}")
-                    row = run_one(job, cfg, clients, cfg_yaml)
+                    row = _safe_run_one(job, cfg)
                     _record(cfg.name, job, row)
                     progress.advance(task)
 

@@ -44,6 +44,37 @@ def _strip_code_fences(text: str) -> str:
     return t.strip()
 
 
+def _safe_int(v) -> int:
+    try:
+        return int(v) if v is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _gemini_usage(resp) -> tuple[int, int]:
+    """Extract (prompt, output) token counts from a Gemini response.
+
+    The google-genai SDK sometimes returns a UsageMetadata with attributes
+    equal to None (e.g. on safety-filtered or empty candidates). Some
+    versions of the SDK use snake_case, others camelCase. Be defensive.
+    """
+    usage = getattr(resp, "usage_metadata", None)
+    if usage is None:
+        return 0, 0
+    in_tok = (
+        getattr(usage, "prompt_token_count", None)
+        or getattr(usage, "promptTokenCount", None)
+        or 0
+    )
+    out_tok = (
+        getattr(usage, "candidates_token_count", None)
+        or getattr(usage, "candidatesTokenCount", None)
+        or getattr(usage, "output_token_count", None)
+        or 0
+    )
+    return _safe_int(in_tok), _safe_int(out_tok)
+
+
 def parse_model_json(raw_text: str) -> dict:
     cleaned = _strip_code_fences(raw_text)
     try:
@@ -96,11 +127,14 @@ class ClaudeClient:
         text = "".join(
             b.text for b in msg.content if getattr(b, "type", None) == "text"
         )
+        usage = getattr(msg, "usage", None)
+        in_tok = _safe_int(getattr(usage, "input_tokens", 0)) if usage else 0
+        out_tok = _safe_int(getattr(usage, "output_tokens", 0)) if usage else 0
         return ModelCall(
             raw_text=text,
-            latency_sec=latency,
-            input_tokens=msg.usage.input_tokens,
-            output_tokens=msg.usage.output_tokens,
+            latency_sec=float(latency),
+            input_tokens=in_tok,
+            output_tokens=out_tok,
             model_id=model,
         )
 
@@ -154,14 +188,12 @@ class GeminiClient:
         )
         latency = time.perf_counter() - t0
         text = resp.text or ""
-        usage = getattr(resp, "usage_metadata", None)
-        in_tok = getattr(usage, "prompt_token_count", 0) if usage else 0
-        out_tok = getattr(usage, "candidates_token_count", 0) if usage else 0
+        in_tok, out_tok = _gemini_usage(resp)
         return ModelCall(
             raw_text=text,
-            latency_sec=latency,
-            input_tokens=in_tok or 0,
-            output_tokens=out_tok or 0,
+            latency_sec=float(latency),
+            input_tokens=int(in_tok),
+            output_tokens=int(out_tok),
             model_id=model,
         )
 

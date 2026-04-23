@@ -387,6 +387,7 @@ def _execute_run(
                 state["error"] = event.get("message")
                 state["log"].append(f"ERROR: {event.get('message')}")
 
+    import traceback as _tb
     try:
         clients = {} if dry_run else build_clients(cfg_yaml)
         run(
@@ -399,4 +400,5 @@ def _execute_run(
         )
     except Exception as e:
         log.exception("Run %s failed", run_id)
-        emit({"type": "error", "message": str(e)})
+        emit({"type": "log", "message": _tb.format_exc()})
+        emit({"type": "error", "message": f"{type(e).__name__}: {e}"})
