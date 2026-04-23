@@ -50,8 +50,21 @@ def create_app(config_path: str = "config.yaml") -> Flask:
     load_dotenv()
     app = Flask(__name__)
     app.config["CFG_PATH"] = config_path
-    app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB per request
+    # 2 GB per request. Keeps a ceiling for pathological cases but lets a batch
+    # of 100+ invoices through comfortably.
+    app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024
     app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(16)
+
+    @app.errorhandler(413)
+    def too_large(_e):
+        return (
+            "<h1>Upload too large</h1>"
+            "<p>Your batch exceeds the per-request size limit. "
+            "Try uploading the invoices in smaller batches (e.g. 30-50 at a time), "
+            "then click Start evaluation when they're all on disk.</p>"
+            "<p><a href='/'>Back</a></p>",
+            413,
+        )
 
     def _cfg() -> dict:
         return yaml.safe_load(Path(app.config["CFG_PATH"]).read_text(encoding="utf-8"))
@@ -86,17 +99,37 @@ def create_app(config_path: str = "config.yaml") -> Flask:
             ).is_default(),
         }
         if invoices_dir.exists():
-            info["invoice_count_on_disk"] = sum(
-                1
-                for p in invoices_dir.iterdir()
-                if p.is_file() and p.suffix.lower() in {".pdf", ".xlsx"}
+            invoice_files = sorted(
+                [
+                    p
+                    for p in invoices_dir.iterdir()
+                    if p.is_file() and p.suffix.lower() in {".pdf", ".xlsx"}
+                ],
+                key=lambda p: p.name.lower(),
             )
+            info["invoice_count_on_disk"] = len(invoice_files)
+            info["invoice_files"] = [
+                {"name": p.name, "size_kb": max(1, p.stat().st_size // 1024)}
+                for p in invoice_files
+            ]
+        else:
+            info["invoice_files"] = []
         if agreements_dir.exists():
-            info["agreement_count_on_disk"] = sum(
-                1
-                for p in agreements_dir.iterdir()
-                if p.is_file() and p.suffix.lower() in {".pdf", ".xlsx"}
+            agreement_files = sorted(
+                [
+                    p
+                    for p in agreements_dir.iterdir()
+                    if p.is_file() and p.suffix.lower() in {".pdf", ".xlsx"}
+                ],
+                key=lambda p: p.name.lower(),
             )
+            info["agreement_count_on_disk"] = len(agreement_files)
+            info["agreement_files"] = [
+                {"name": p.name, "size_kb": max(1, p.stat().st_size // 1024)}
+                for p in agreement_files
+            ]
+        else:
+            info["agreement_files"] = []
         if gt_path.exists():
             try:
                 jobs = load_jobs(cfg_yaml, limit=None)

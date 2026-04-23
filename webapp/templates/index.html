@@ -80,7 +80,9 @@
     Drop your PDFs, agreements, and <code>ground_truth.json</code> here. Files
     are stored on the server's disk under <code>data/</code>. On free hosting
     tiers with ephemeral disk, uploads may be lost when the service restarts —
-    re-upload if that happens.
+    re-upload if that happens. <strong>After uploading, verify the file list
+    below shows your files before starting a run.</strong>
+    For 100+ invoices, upload in batches of 30-50 to keep each request small.
   </p>
   <div class="upload-grid">
     <div class="upload-tile">
@@ -179,23 +181,50 @@
   </form>
 </div>
 
-{% if data_info.jobs %}
+{% if data_info.invoice_files or data_info.agreement_files %}
 <div class="card">
-  <h2>Invoices detected ({{ data_info.jobs|length }})</h2>
-  <table>
-    <thead><tr><th>Invoice</th><th>Agreement</th></tr></thead>
-    <tbody>
-      {% for j in data_info.jobs[:50] %}
-      <tr>
-        <td>{{ j.id }}</td>
-        <td>{{ j.agreement or '—' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% if data_info.jobs|length > 50 %}
-    <p class="muted">... and {{ data_info.jobs|length - 50 }} more</p>
-  {% endif %}
+  <h2>Files on disk</h2>
+  <div class="grid-2">
+    <div>
+      <h3 style="font-size: 14px; margin: 0 0 8px 0;">
+        Invoices ({{ data_info.invoice_files|length }})
+      </h3>
+      {% if data_info.invoice_files %}
+      <div style="max-height: 300px; overflow-y: auto; background: var(--panel-2); border-radius: 6px; padding: 8px 10px;">
+        <table style="font-size: 12px;">
+          <tbody>
+            {% for f in data_info.invoice_files[:500] %}
+            <tr><td style="word-break: break-all;">{{ f.name }}</td><td class="muted" style="white-space: nowrap;">{{ f.size_kb }} KB</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% if data_info.invoice_files|length > 500 %}
+          <p class="muted" style="margin: 6px 0 0; font-size: 11px;">... and {{ data_info.invoice_files|length - 500 }} more</p>
+        {% endif %}
+      </div>
+      {% else %}
+        <p class="muted" style="font-size: 13px;">No invoices uploaded yet.</p>
+      {% endif %}
+    </div>
+    <div>
+      <h3 style="font-size: 14px; margin: 0 0 8px 0;">
+        Agreements ({{ data_info.agreement_files|length }})
+      </h3>
+      {% if data_info.agreement_files %}
+      <div style="max-height: 300px; overflow-y: auto; background: var(--panel-2); border-radius: 6px; padding: 8px 10px;">
+        <table style="font-size: 12px;">
+          <tbody>
+            {% for f in data_info.agreement_files %}
+            <tr><td style="word-break: break-all;">{{ f.name }}</td><td class="muted" style="white-space: nowrap;">{{ f.size_kb }} KB</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+        <p class="muted" style="font-size: 13px;">No agreements uploaded yet.</p>
+      {% endif %}
+    </div>
+  </div>
 </div>
 {% endif %}
 
