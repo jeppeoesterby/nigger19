@@ -72,7 +72,14 @@ const summaryTbody = document.querySelector("#summary-table tbody");
 
 let done = false;
 
-function pct(v) { return (v * 100).toFixed(1); }
+function pct(v) {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  return (v * 100).toFixed(1);
+}
+function num(v, digits) {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  return v.toFixed(digits);
+}
 
 function renderSummary(rows) {
   summaryTbody.innerHTML = "";
@@ -86,8 +93,8 @@ function renderSummary(rows) {
       <td>${pct(r.credit_note_accuracy)}</td>
       <td>${pct(r.rebate_accuracy)}</td>
       <td><strong>${pct(r.composite_score)}</strong></td>
-      <td>${r.avg_latency_sec.toFixed(1)}s</td>
-      <td>$${r.total_cost_usd.toFixed(3)}</td>
+      <td>${num(r.avg_latency_sec, 1)}s</td>
+      <td>$${num(r.total_cost_usd, 3)}</td>
       <td>${r.failures}</td>
     `;
     summaryTbody.appendChild(tr);

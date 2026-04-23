@@ -440,6 +440,14 @@ def _execute_run(
     cfg_yaml: dict,
 ) -> None:
     def emit(event: dict) -> None:
+        try:
+            _emit_inner(event)
+        except Exception:
+            # An error in the UI-side log formatter must never abort the run.
+            # Swallow and log; the background run continues.
+            log.exception("emit callback failed for event %r", event.get("type"))
+
+    def _emit_inner(event: dict) -> None:
         with RUNS_LOCK:
             state = RUNS.get(run_id)
             if not state:
@@ -459,11 +467,17 @@ def _execute_run(
                 state["progress"]["total"] = event["total"]
                 state["progress"]["current"] = event["current"]
             elif t == "completed":
+                composite = event.get("composite")
+                if composite is None:
+                    score_str = "extraction-only"
+                else:
+                    score_str = f"composite={composite * 100:.1f}%"
+                notes = event.get("notes") or ""
                 state["log"].append(
                     f"[{event['completed']}/{event['total']}] "
                     f"{event['config_name']} :: {event['invoice_id']}  "
-                    f"composite={event['composite']*100:.1f}%"
-                    + (f"  ({event['notes']})" if event["notes"] else "")
+                    f"{score_str}"
+                    + (f"  ({notes})" if notes else "")
                 )
             elif t == "log":
                 state["log"].append(event["message"])
