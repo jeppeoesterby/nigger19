@@ -154,18 +154,57 @@ def _xlsx_to_text(path: Path) -> str:
     return "\n".join(out)
 
 
-def _load_invoice_content(path: Path) -> tuple[Optional[bytes], Optional[str]]:
+class _FileCache:
+    """Per-run cache for file bytes and flattened xlsx text.
+
+    Without this, each invoice PDF is re-read from disk once per model config
+    (6x), and each agreement PDF is re-read once per (invoice, config) pair
+    (648x for a 108-invoice / 6-config batch). With it, every file reads
+    exactly once.
+    """
+
+    def __init__(self) -> None:
+        self._bytes: dict[str, bytes] = {}
+        self._xlsx: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def read_bytes(self, path: Path) -> bytes:
+        key = str(path)
+        with self._lock:
+            cached = self._bytes.get(key)
+            if cached is not None:
+                return cached
+        data = path.read_bytes()
+        with self._lock:
+            self._bytes[key] = data
+            return data
+
+    def xlsx_text(self, path: Path) -> str:
+        key = str(path)
+        with self._lock:
+            cached = self._xlsx.get(key)
+            if cached is not None:
+                return cached
+        text = _xlsx_to_text(path)
+        with self._lock:
+            self._xlsx[key] = text
+            return text
+
+
+def _load_invoice_content(
+    path: Path, cache: Optional[_FileCache] = None
+) -> tuple[Optional[bytes], Optional[str]]:
     """Return (pdf_bytes, xlsx_text). Exactly one is non-None."""
     ext = path.suffix.lower()
     if ext == ".pdf":
-        return path.read_bytes(), None
+        return (cache.read_bytes(path) if cache else path.read_bytes()), None
     if ext == ".xlsx":
-        return None, _xlsx_to_text(path)
+        return None, (cache.xlsx_text(path) if cache else _xlsx_to_text(path))
     raise ValueError(f"Unsupported invoice extension: {path}")
 
 
 def _load_agreement_content(
-    paths: list[Path],
+    paths: list[Path], cache: Optional[_FileCache] = None
 ) -> tuple[list[bytes], str]:
     """Return (list of PDF bytes, concatenated xlsx text)."""
     pdfs: list[bytes] = []
@@ -173,9 +212,10 @@ def _load_agreement_content(
     for p in paths:
         ext = p.suffix.lower()
         if ext == ".pdf":
-            pdfs.append(p.read_bytes())
+            pdfs.append(cache.read_bytes(p) if cache else p.read_bytes())
         elif ext == ".xlsx":
-            text_parts.append(f"### {p.name}\n{_xlsx_to_text(p)}")
+            text = cache.xlsx_text(p) if cache else _xlsx_to_text(p)
+            text_parts.append(f"### {p.name}\n{text}")
     return pdfs, "\n\n".join(text_parts)
 
 
@@ -214,10 +254,13 @@ def run_one(
     clients: dict,
     cfg_yaml: dict,
     templates: Optional[PromptTemplates] = None,
+    file_cache: Optional[_FileCache] = None,
 ) -> dict:
     """Run a single (invoice, config) pair. Always returns a row dict."""
-    invoice_pdf, invoice_text = _load_invoice_content(job.invoice_path)
-    agreement_pdfs, agreement_text = _load_agreement_content(job.agreement_paths)
+    invoice_pdf, invoice_text = _load_invoice_content(job.invoice_path, file_cache)
+    agreement_pdfs, agreement_text = _load_agreement_content(
+        job.agreement_paths, file_cache
+    )
     has_agreement = bool(agreement_pdfs) or bool(agreement_text)
 
     total_in = total_out = 0
@@ -426,14 +469,59 @@ def run(
             }
         )
 
+    # Per-run PDF/xlsx cache so each file is read from disk exactly once.
+    file_cache = _FileCache()
+
+    # Circuit breaker: after CIRCUIT_BREAK_THRESHOLD consecutive failures for a
+    # config (typically because the model ID doesn't exist or the API key isn't
+    # authorized for that model), stop submitting new work for it. Saves time
+    # on deterministic failures. Doesn't cancel in-flight work — but skipped
+    # work returns a cheap placeholder row in milliseconds.
+    CIRCUIT_BREAK_THRESHOLD = 5
+    broken_configs: set[str] = set()
+    cfg_counts: dict[str, dict[str, int]] = {}
+    cb_lock = threading.Lock()
+
+    def _skipped_row(cfg: ModelConfig, job: InvoiceJob, reason: str) -> dict:
+        return {
+            "invoice_id": job.invoice_id,
+            "config_name": cfg.name,
+            "field_extraction": None,
+            "price_match": None,
+            "credit_note": None,
+            "rebate": None,
+            "composite": None,
+            "latency_sec": 0.0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cost_usd": 0.0,
+            "notes": reason,
+            "per_field": [],
+            "pred": None,
+            "ground_truth": job.ground_truth,
+            "failed": True,
+            "has_ground_truth": job.ground_truth is not None,
+        }
+
     def _safe_run_one(job: InvoiceJob, cfg: ModelConfig) -> dict:
         """Never raises. On any exception, returns a failure row so the batch continues."""
+        # Short-circuit if this config is already tripped.
+        with cb_lock:
+            if cfg.name in broken_configs:
+                return _skipped_row(
+                    cfg,
+                    job,
+                    f"skipped: config hit {CIRCUIT_BREAK_THRESHOLD} consecutive failures",
+                )
+
         try:
-            return run_one(job, cfg, clients, cfg_yaml, templates=templates)
+            row = run_one(
+                job, cfg, clients, cfg_yaml, templates=templates, file_cache=file_cache
+            )
         except Exception as e:
             tb = traceback.format_exc()
             log.exception("run_one failed for %s :: %s", cfg.name, job.invoice_id)
-            return {
+            row = {
                 "invoice_id": job.invoice_id,
                 "config_name": cfg.name,
                 "field_extraction": None,
@@ -453,6 +541,39 @@ def run(
                 "has_ground_truth": job.ground_truth is not None,
                 "_traceback": tb,
             }
+
+        # Update failure tracker. If config hits threshold of consecutive
+        # failures, trip its breaker so remaining dispatched work skips.
+        with cb_lock:
+            s = cfg_counts.setdefault(cfg.name, {"consec_fail": 0, "total": 0})
+            s["total"] += 1
+            if row["failed"]:
+                s["consec_fail"] += 1
+                if (
+                    s["consec_fail"] >= CIRCUIT_BREAK_THRESHOLD
+                    and cfg.name not in broken_configs
+                ):
+                    broken_configs.add(cfg.name)
+                    log.warning(
+                        "Circuit breaker: disabling %s after %d consecutive failures",
+                        cfg.name,
+                        s["consec_fail"],
+                    )
+                    emit(
+                        {
+                            "type": "log",
+                            "message": (
+                                f"CIRCUIT BREAKER: {cfg.name} disabled after "
+                                f"{s['consec_fail']} consecutive failures. "
+                                "Remaining invoices for this config will be skipped. "
+                                "Likely cause: wrong model ID or API key not "
+                                "authorized for this model."
+                            ),
+                        }
+                    )
+            else:
+                s["consec_fail"] = 0
+        return row
 
     parallelism = max(1, int(cfg_yaml.get("api", {}).get("parallelism", 1) or 1))
     pairs = [(cfg, job) for cfg in configs for job in jobs]
