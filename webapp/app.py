@@ -277,6 +277,45 @@ def create_app(config_path: str = "config.yaml") -> Flask:
             "results.html", past_results=_list_past_results(cfg_yaml)
         )
 
+    # ---------------- model discovery ----------------
+
+    @app.route("/models")
+    def list_available_models():
+        """Hit each provider's ListModels endpoint and show what's available.
+        Useful when a config 404s because the model ID is wrong or not
+        enabled on the user's project."""
+        out = {"gemini": [], "claude": [], "errors": []}
+        goog_key = os.environ.get("GOOGLE_API_KEY")
+        if goog_key:
+            try:
+                from google import genai as _genai
+                client = _genai.Client(api_key=goog_key)
+                for m in client.models.list():
+                    name = getattr(m, "name", None) or str(m)
+                    methods = getattr(m, "supported_actions", None) or getattr(
+                        m, "supported_generation_methods", None
+                    )
+                    out["gemini"].append({"name": name, "methods": list(methods) if methods else []})
+            except Exception as e:
+                out["errors"].append(f"gemini: {e}")
+        else:
+            out["errors"].append("GOOGLE_API_KEY not set")
+
+        anth_key = os.environ.get("ANTHROPIC_API_KEY")
+        if anth_key:
+            try:
+                from anthropic import Anthropic
+                a = Anthropic(api_key=anth_key)
+                page = a.models.list(limit=50)
+                for m in page.data:
+                    out["claude"].append({"name": m.id, "display_name": getattr(m, "display_name", "")})
+            except Exception as e:
+                out["errors"].append(f"claude: {e}")
+        else:
+            out["errors"].append("ANTHROPIC_API_KEY not set")
+
+        return jsonify(out)
+
     # ---------------- prompt editing ----------------
 
     def _prompts_path() -> Path:

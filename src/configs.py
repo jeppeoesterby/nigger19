@@ -26,6 +26,11 @@ class ModelConfig:
 
 CONFIGS: list[ModelConfig] = [
     ModelConfig(
+        name="Gemini 3 Pro",
+        extraction=Stage("gemini", "gemini-3-pro"),
+        reasoning=Stage("gemini", "gemini-3-pro"),
+    ),
+    ModelConfig(
         name="Gemini 2.5 Pro",
         extraction=Stage("gemini", "gemini-2.5-pro"),
         reasoning=Stage("gemini", "gemini-2.5-pro"),
@@ -47,12 +52,12 @@ CONFIGS: list[ModelConfig] = [
     ),
     ModelConfig(
         name="Hybrid Sonnet",
-        extraction=Stage("gemini", "gemini-2.5-flash"),
+        extraction=Stage("gemini", "gemini-3-pro"),
         reasoning=Stage("claude", "claude-sonnet-4-6"),
     ),
     ModelConfig(
         name="Hybrid Opus",
-        extraction=Stage("gemini", "gemini-2.5-flash"),
+        extraction=Stage("gemini", "gemini-3-pro"),
         reasoning=Stage("claude", "claude-opus-4-7"),
     ),
 ]
