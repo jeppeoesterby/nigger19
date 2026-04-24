@@ -25,20 +25,27 @@ def _write_header(ws, headers: list[str]) -> None:
     ws.freeze_panes = "A2"
 
 
-def _autosize(ws, headers: list[str], max_width: int = 60) -> None:
+def _autosize(ws, headers: list[str], max_width: int = 60, sample_rows: int = 50) -> None:
+    """Set column widths. For large sheets (>sample_rows), sample the first N
+    rows rather than iterating all — avoids O(n) per column on sheets with
+    thousands of rows. The cost of imprecise column width on deeper rows is
+    negligible vs. the perf hit of full iteration."""
+    max_row_to_check = min(ws.max_row, sample_rows + 1)
     for col_idx, header in enumerate(headers, start=1):
         col_letter = get_column_letter(col_idx)
         longest = len(str(header))
-        for row in ws.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx):
-            for cell in row:
-                v = cell.value
-                if v is None:
-                    continue
-                s = str(v)
-                # For JSON columns, clamp.
-                if "\n" in s:
-                    s = s.split("\n")[0]
-                longest = max(longest, len(s))
+        if max_row_to_check >= 2:
+            for row in ws.iter_rows(
+                min_row=2, max_row=max_row_to_check, min_col=col_idx, max_col=col_idx
+            ):
+                for cell in row:
+                    v = cell.value
+                    if v is None:
+                        continue
+                    s = str(v)
+                    if "\n" in s:
+                        s = s.split("\n")[0]
+                    longest = max(longest, len(s))
         ws.column_dimensions[col_letter].width = min(max_width, longest + 2)
 
 

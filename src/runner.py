@@ -295,14 +295,17 @@ def run_one(
             with_agreement=has_agreement,
             templates=templates,
         )
-        attachments: list[bytes] = []
-        if invoice_pdf is not None:
-            attachments.append(invoice_pdf)
-        attachments.extend(agreement_pdfs)
+        # Agreement PDFs are identical across all invoices in this config, so
+        # pass them as cached_prefix so Claude can cache them server-side.
+        # Invoice PDF is per-call and goes through pdf_documents (not cached).
+        per_invoice = [invoice_pdf] if invoice_pdf is not None else []
 
         client = clients[cfg.extraction.provider]
         call: ModelCall = client.call(
-            cfg_yaml["models"][cfg.extraction.model_key], prompt, attachments
+            cfg_yaml["models"][cfg.extraction.model_key],
+            prompt,
+            pdf_documents=per_invoice,
+            cached_prefix_pdfs=agreement_pdfs,
         )
         _accumulate(call, cfg.extraction.model_key)
         if call.error:
@@ -351,7 +354,8 @@ def run_one(
             call2 = reason_client.call(
                 cfg_yaml["models"][cfg.reasoning.model_key],
                 reason_prompt,
-                agreement_pdfs,
+                pdf_documents=[],
+                cached_prefix_pdfs=agreement_pdfs,
             )
             _accumulate(call2, cfg.reasoning.model_key)
             if call2.error:

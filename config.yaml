@@ -48,12 +48,15 @@ api:
   timeout_sec: 300
   retries: 3
   retry_backoff_sec: 4
-  # How many (invoice, config) pairs to process in parallel. Each uses one
-  # model API call (or two for hybrid). Anthropic tier-1 limits are 30k
-  # input tokens/min and 50 req/min PER MODEL (shared across configs). At
-  # ~1500 input tokens per call, 2 parallel workers ≈ 18k tokens/min, safely
-  # under limit. Increase after you've upgraded tier.
-  parallelism: 2
+  # Global thread pool size. Each (invoice, config) pair is one thread. The
+  # actual API concurrency per provider is capped separately below, so the
+  # fast provider isn't bottlenecked by the slow one.
+  parallelism: 10
+  # Per-provider API concurrency caps. Respect your rate-limit tier.
+  # Anthropic tier-1: 30k tok/min, 50 req/min → 2 parallel safe.
+  # Gemini free/paid: much higher; 8 is comfortable.
+  claude_max_concurrent: 2
+  gemini_max_concurrent: 8
 
 paths:
   invoices_dir: "data/invoices"
