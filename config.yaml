@@ -4,7 +4,7 @@
 models:
   claude-sonnet-4-6: "claude-sonnet-4-6"
   claude-opus-4-7: "claude-opus-4-7"
-  gemini-3-pro: "gemini-3-pro"
+  gemini-3.1-pro-preview: "gemini-3.1-pro-preview"
   gemini-2.5-pro: "gemini-2.5-pro"
   gemini-2.5-flash: "gemini-2.5-flash"
 
@@ -16,10 +16,11 @@ pricing:
   claude-opus-4-7:
     input: 15.00
     output: 75.00
-  gemini-3-pro:
-    # Placeholder - update with real Gemini 3 Pro pricing when you verify in AI Studio
-    input: 2.50
-    output: 12.50
+  gemini-3.1-pro-preview:
+    # Verified from Google AI pricing docs (Feb 2026 release).
+    # Prices double above 200K-token context; we stay under that for invoices.
+    input: 2.00
+    output: 12.00
   gemini-2.5-pro:
     input: 1.25
     output: 10.00
