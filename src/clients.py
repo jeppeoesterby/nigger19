@@ -136,8 +136,8 @@ class ClaudeClient:
         self.max_tokens = max_tokens
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=2, max=30),
+        stop=stop_after_attempt(6),
+        wait=wait_exponential(multiplier=3, min=3, max=90),
         retry=retry_if_exception(_is_retriable),
         reraise=True,
     )
@@ -232,8 +232,8 @@ class GeminiClient:
         self.timeout_sec = timeout_sec
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=2, max=30),
+        stop=stop_after_attempt(6),
+        wait=wait_exponential(multiplier=3, min=3, max=90),
         retry=retry_if_exception(_is_retriable),
         reraise=True,
     )

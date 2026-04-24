@@ -550,12 +550,32 @@ def run(
                 "_traceback": tb,
             }
 
-        # Update failure tracker. If config hits threshold of consecutive
-        # failures, trip its breaker so remaining dispatched work skips.
+        # Update failure tracker. The breaker should only trip on PERMANENT
+        # failures (wrong model ID, auth, bad request). Transient failures
+        # like 429 rate limits or 5xx should NOT count — they'll resolve with
+        # enough wait time. Reset the consecutive counter on both success AND
+        # transient failure so rate-limit churn doesn't kill a healthy config.
+        notes_lower = (row.get("notes") or "").lower()
+        is_transient_failure = any(
+            marker in notes_lower
+            for marker in (
+                "429",
+                "rate_limit",
+                "rate limit",
+                "timeout",
+                "unavailable",
+                "temporarily",
+                "500 ",
+                "502 ",
+                "503 ",
+                "504 ",
+                "connection",
+            )
+        )
         with cb_lock:
             s = cfg_counts.setdefault(cfg.name, {"consec_fail": 0, "total": 0})
             s["total"] += 1
-            if row["failed"]:
+            if row["failed"] and not is_transient_failure:
                 s["consec_fail"] += 1
                 if (
                     s["consec_fail"] >= CIRCUIT_BREAK_THRESHOLD
@@ -563,7 +583,7 @@ def run(
                 ):
                     broken_configs.add(cfg.name)
                     log.warning(
-                        "Circuit breaker: disabling %s after %d consecutive failures",
+                        "Circuit breaker: disabling %s after %d consecutive permanent failures",
                         cfg.name,
                         s["consec_fail"],
                     )
@@ -572,14 +592,16 @@ def run(
                             "type": "log",
                             "message": (
                                 f"CIRCUIT BREAKER: {cfg.name} disabled after "
-                                f"{s['consec_fail']} consecutive failures. "
-                                "Remaining invoices for this config will be skipped. "
-                                "Likely cause: wrong model ID or API key not "
-                                "authorized for this model."
+                                f"{s['consec_fail']} consecutive PERMANENT failures "
+                                "(not rate limits or timeouts). Remaining invoices "
+                                "for this config will be skipped. Likely cause: "
+                                "wrong model ID or API key not authorized for this model."
                             ),
                         }
                     )
             else:
+                # Success or transient failure -> reset. Don't penalize a
+                # working config for rate-limit churn.
                 s["consec_fail"] = 0
         return row
 

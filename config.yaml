@@ -5,7 +5,7 @@ models:
   claude-sonnet-4-6: "claude-sonnet-4-6"
   claude-opus-4-7: "claude-opus-4-7"
   gemini-2.5-pro: "gemini-2.5-pro"
-  gemini-3.1-pro: "gemini-3.1-pro"
+  gemini-2.5-flash: "gemini-2.5-flash"
 
 # USD per 1M tokens. Verify on provider pricing pages before a real run.
 pricing:
@@ -18,9 +18,9 @@ pricing:
   gemini-2.5-pro:
     input: 1.25
     output: 10.00
-  gemini-3.1-pro:
-    input: 2.00
-    output: 12.00
+  gemini-2.5-flash:
+    input: 0.30
+    output: 2.50
 
 # Composite scoring weights. Must sum to 1.0.
 scoring_weights:
@@ -43,9 +43,11 @@ api:
   retries: 3
   retry_backoff_sec: 4
   # How many (invoice, config) pairs to process in parallel. Each uses one
-  # model API call (or two for hybrid). Pick a value that respects your rate
-  # limits. 1 = old sequential behavior; 6 is a safe speedup for most tiers.
-  parallelism: 6
+  # model API call (or two for hybrid). Anthropic tier-1 limits are 30k
+  # input tokens/min and 50 req/min PER MODEL (shared across configs). At
+  # ~1500 input tokens per call, 2 parallel workers ≈ 18k tokens/min, safely
+  # under limit. Increase after you've upgraded tier.
+  parallelism: 2
 
 paths:
   invoices_dir: "data/invoices"
