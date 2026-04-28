@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Prompt-versioner — DiFacto{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Prompt-versioner</h2>
+  <p>Hver godkendt autotune-ændring (eller manuel rediger) gemmes som ny version. Klik <em>Rul tilbage</em> for at gå tilbage til en tidligere version.</p>
+</div>
+
+{% if versions %}
+<div class="card">
+  <table>
+    <thead><tr>
+      <th>Version</th>
+      <th>Tid</th>
+      <th>Kilde</th>
+      <th>Note</th>
+      <th>Anvendt forslag</th>
+      <th></th>
+      <th></th>
+    </tr></thead>
+    <tbody>
+      {% for v in versions %}
+      <tr>
+        <td><code>{{ v.version_id }}</code> {% if loop.first %}<span class="badge done">latest</span>{% endif %}</td>
+        <td class="muted">{{ v.timestamp }}</td>
+        <td><span class="badge">{{ v.source }}</span></td>
+        <td>{{ v.note or '—' }}</td>
+        <td>
+          {% for sid in v.applied_suggestion_ids %}
+            <code>{{ sid }}</code>
+          {% endfor %}
+        </td>
+        <td><a href="{{ url_for('feedback.prompt_history_view', version_id=v.version_id) }}">Se</a></td>
+        <td>
+          {% if not loop.first %}
+            <form method="post" action="{{ url_for('feedback.prompt_history_rollback', version_id=v.version_id) }}" onsubmit="return confirm('Rul tilbage til version {{ v.version_id }}? Den nuværende prompt erstattes.');">
+              <button class="danger-btn" type="submit">Rul tilbage</button>
+            </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card">
+  <p class="muted">Ingen versioner gemt endnu. Versioner oprettes første gang en autotune-ændring godkendes eller en rollback udføres.</p>
+</div>
+{% endif %}
+
+<p><a href="{{ url_for('feedback.autotune_index') }}">← Tilbage til autotune</a></p>
+
+{% endblock %}

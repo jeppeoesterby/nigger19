@@ -47,6 +47,12 @@ from src.feedback_insights import (
 )
 from src.feedback_loader import list_runs, load_run
 from src.golden_set import compare, jobs_for_regression
+from src.auto_tune import (
+    AutoTuneStore,
+    analyze_with_llm,
+    apply_suggestion,
+)
+from src.prompt_history import PromptHistory, PromptVersion
 
 log = logging.getLogger(__name__)
 
@@ -75,6 +81,26 @@ def _store() -> FeedbackStore:
     base = Path(current_app.config["BASE_DIR"])
     path = base / "data" / "feedback.jsonl"
     return FeedbackStore(path)
+
+
+def _autotune_store() -> AutoTuneStore:
+    base = Path(current_app.config["BASE_DIR"])
+    return AutoTuneStore(base / "data" / "autotune.json")
+
+
+def _prompt_history() -> PromptHistory:
+    base = Path(current_app.config["BASE_DIR"])
+    return PromptHistory(base / "data" / "prompt_history.jsonl")
+
+
+def _prompts_path() -> Path:
+    base = Path(current_app.config["BASE_DIR"])
+    cfg = _cfg()
+    return Path(
+        cfg.get("paths", {}).get(
+            "prompts_file", str(base / "data" / "prompts.json")
+        )
+    )
 
 
 def _results_dir() -> Path:
@@ -561,3 +587,216 @@ def _to_float(v) -> Optional[float]:
         return float(s)
     except ValueError:
         return None
+
+
+# ============================================================================
+# AUTOTUNE ROUTES
+# ============================================================================
+
+# Background autotune analysis runs (in-memory progress tracker)
+_AUTOTUNE_PROGRESS: dict[str, dict] = {}
+_AUTOTUNE_LOCK = threading.Lock()
+
+
+@bp.route("/autotune")
+def autotune_index():
+    store = _store()
+    entries = store.list_all()
+    autotune_store = _autotune_store()
+    recent = autotune_store.list_recent(limit=10)
+    history = _prompt_history()
+    versions = history.list_versions()
+    versions.sort(key=lambda v: v.timestamp, reverse=True)
+    # Cost estimate: rough — meta-prompt ~5k tokens, output ~2k. Sonnet at $3/$15 per M.
+    est_input_tokens = 4000 + len(entries) * 200  # base + per-entry summary
+    est_cost_usd = (est_input_tokens / 1_000_000) * 3.0 + (2000 / 1_000_000) * 15.0
+    return render_template(
+        "feedback_autotune.html",
+        feedback_count=len(entries),
+        recent_runs=recent,
+        versions=versions[:10],
+        est_input_tokens=est_input_tokens,
+        est_cost_usd=est_cost_usd,
+    )
+
+
+@bp.route("/autotune/analyze", methods=["POST"])
+def autotune_analyze():
+    """Kick off LLM analysis in a background thread; redirect to result page
+    that polls progress."""
+    store = _store()
+    entries = store.list_all()
+    if not entries:
+        flash("No feedback to analyze. Capture some reviews first.")
+        return redirect(url_for("feedback.autotune_index"))
+
+    # Resolve current prompt templates: latest history version if any,
+    # otherwise the prompts.json on disk.
+    history = _prompt_history()
+    latest = history.latest()
+    if latest is not None:
+        templates = latest.to_templates()
+    else:
+        from src.prompts import PromptTemplates
+        templates = PromptTemplates.load(_prompts_path())
+
+    progress_id = uuid.uuid4().hex[:8]
+    with _AUTOTUNE_LOCK:
+        _AUTOTUNE_PROGRESS[progress_id] = {
+            "status": "running",
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+            "result_run_id": None,
+            "error": None,
+        }
+
+    def _execute(app):
+        with app.app_context():
+            try:
+                from src.clients import build_clients
+                clients = build_clients(_cfg())
+                claude = clients["claude"]
+                result = analyze_with_llm(templates, entries, claude_client=claude)
+                _autotune_store().save(result)
+                with _AUTOTUNE_LOCK:
+                    _AUTOTUNE_PROGRESS[progress_id]["status"] = "done"
+                    _AUTOTUNE_PROGRESS[progress_id]["result_run_id"] = result.run_id
+            except Exception as e:
+                with _AUTOTUNE_LOCK:
+                    _AUTOTUNE_PROGRESS[progress_id]["status"] = "error"
+                    _AUTOTUNE_PROGRESS[progress_id]["error"] = (
+                        f"{type(e).__name__}: {e}"
+                    )
+
+    threading.Thread(target=_execute, args=(current_app._get_current_object(),), daemon=True).start()
+    return redirect(url_for("feedback.autotune_progress", progress_id=progress_id))
+
+
+@bp.route("/autotune/progress/<progress_id>")
+def autotune_progress(progress_id: str):
+    with _AUTOTUNE_LOCK:
+        state = _AUTOTUNE_PROGRESS.get(progress_id)
+    if not state:
+        abort(404)
+    return render_template(
+        "feedback_autotune_progress.html", progress_id=progress_id, state=state
+    )
+
+
+@bp.route("/autotune/result/<run_id>")
+def autotune_result(run_id: str):
+    result = _autotune_store().get(run_id)
+    if not result:
+        abort(404)
+    # Build the supporting-feedback lookup so we can show inline excerpts
+    fb_store = _store()
+    fb_by_id = {e.feedback_id: e for e in fb_store.list_all()}
+    return render_template(
+        "feedback_autotune_result.html",
+        result=result,
+        fb_by_id=fb_by_id,
+    )
+
+
+@bp.route("/autotune/diagnostics/<run_id>")
+def autotune_diagnostics(run_id: str):
+    result = _autotune_store().get(run_id)
+    if not result:
+        abort(404)
+    return render_template(
+        "feedback_autotune_diagnostics.html", result=result
+    )
+
+
+@bp.route("/autotune/apply/<run_id>/<suggestion_id>", methods=["POST"])
+def autotune_apply_one(run_id: str, suggestion_id: str):
+    result = _autotune_store().get(run_id)
+    if not result:
+        abort(404)
+    suggestion = next(
+        (s for s in result.suggestions if s.suggestion_id == suggestion_id),
+        None,
+    )
+    if suggestion is None:
+        flash("Suggestion not found.")
+        return redirect(url_for("feedback.autotune_result", run_id=run_id))
+
+    # Optional override of replacement text from the form ("Tweak and apply")
+    override = (request.form.get("override_replace") or "").strip()
+    if override:
+        suggestion.replace = override
+
+    history = _prompt_history()
+    latest = history.latest()
+    if latest is not None:
+        from src.prompts import PromptTemplates
+        templates = latest.to_templates()
+    else:
+        from src.prompts import PromptTemplates
+        templates = PromptTemplates.load(_prompts_path())
+
+    try:
+        new_templates = apply_suggestion(templates, suggestion)
+    except Exception as e:
+        flash(f"Could not apply suggestion: {e}")
+        return redirect(url_for("feedback.autotune_result", run_id=run_id))
+
+    # Save snapshot
+    note = (
+        f"autotune: {suggestion.block} — {(suggestion.rationale or '')[:60]}"
+    )
+    snapshot = PromptVersion.from_templates(
+        new_templates,
+        source="autotune",
+        autotune_run_id=run_id,
+        applied_suggestion_ids=[suggestion.suggestion_id],
+        note=note,
+    )
+    history.save_snapshot(snapshot)
+    new_templates.save(_prompts_path())
+    flash(
+        f"Applied suggestion {suggestion.suggestion_id} to '{suggestion.block}'. "
+        f"Saved as version {snapshot.version_id}. Consider running a "
+        "regression test to verify."
+    )
+    return redirect(url_for("feedback.autotune_result", run_id=run_id))
+
+
+@bp.route("/prompt-history")
+def prompt_history_page():
+    history = _prompt_history()
+    versions = history.list_versions()
+    versions.sort(key=lambda v: v.timestamp, reverse=True)
+    return render_template(
+        "feedback_prompt_history.html", versions=versions
+    )
+
+
+@bp.route("/prompt-history/rollback/<version_id>", methods=["POST"])
+def prompt_history_rollback(version_id: str):
+    history = _prompt_history()
+    target = history.get(version_id)
+    if not target:
+        flash(f"Version {version_id} not found.")
+        return redirect(url_for("feedback.prompt_history_page"))
+    templates = target.to_templates()
+    # Save as a new snapshot tagged as rollback so the chain is auditable
+    snapshot = PromptVersion.from_templates(
+        templates,
+        source="rollback",
+        note=f"rollback to {version_id}",
+    )
+    history.save_snapshot(snapshot)
+    templates.save(_prompts_path())
+    flash(f"Rolled back to version {version_id}. Saved as new version {snapshot.version_id}.")
+    return redirect(url_for("feedback.prompt_history_page"))
+
+
+@bp.route("/prompt-history/version/<version_id>")
+def prompt_history_view(version_id: str):
+    history = _prompt_history()
+    target = history.get(version_id)
+    if not target:
+        abort(404)
+    return render_template(
+        "feedback_prompt_history_view.html", version=target
+    )

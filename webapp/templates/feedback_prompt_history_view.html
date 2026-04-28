@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Version {{ version.version_id }}{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Prompt-version <code>{{ version.version_id }}</code></h2>
+  <p class="muted">{{ version.timestamp }} · kilde: {{ version.source }}</p>
+  {% if version.note %}<p>{{ version.note }}</p>{% endif %}
+  {% if version.autotune_run_id %}
+    <p><a href="{{ url_for('feedback.autotune_result', run_id=version.autotune_run_id) }}">Se autotune-kørsel der genererede den →</a></p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>intro</h2>
+  <pre style="font-size: 12px; white-space: pre-wrap;">{{ version.intro }}</pre>
+</div>
+
+<div class="card">
+  <h2>instructions_extraction_only</h2>
+  <pre style="font-size: 12px; white-space: pre-wrap;">{{ version.instructions_extraction_only }}</pre>
+</div>
+
+<div class="card">
+  <h2>instructions_with_agreement</h2>
+  <pre style="font-size: 12px; white-space: pre-wrap;">{{ version.instructions_with_agreement }}</pre>
+</div>
+
+<div class="card">
+  <h2>reasoning_instructions</h2>
+  <pre style="font-size: 12px; white-space: pre-wrap;">{{ version.reasoning_instructions }}</pre>
+</div>
+
+<p><a href="{{ url_for('feedback.prompt_history_page') }}">← Tilbage til historik</a></p>
+
+{% endblock %}

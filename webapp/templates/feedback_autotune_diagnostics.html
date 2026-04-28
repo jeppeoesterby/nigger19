@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Autotune diagnostik — {{ result.run_id }}{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Hvad assistenten "så"</h2>
+  <p class="muted">Til 100% transparens: dette er den rå data autotune-modellen fik som input + dens fulde output. Brug det til at verificere at den ikke har fået forvrænget data eller hallucineret.</p>
+</div>
+
+<div class="card">
+  <h2>Feedback-entries der blev sendt ({{ result.feedback_count }})</h2>
+  <details>
+    <summary style="cursor: pointer; color: var(--accent);">Vis liste af feedback_ids</summary>
+    <pre style="font-size: 11px;">{% for fid in result.feedback_id_list %}{{ fid }}
+{% endfor %}</pre>
+  </details>
+</div>
+
+<div class="card">
+  <h2>Meta-prompt sendt til Claude (første 1000 tegn)</h2>
+  <pre style="font-size: 11px;">{{ result.meta_prompt_excerpt }}</pre>
+</div>
+
+<div class="card">
+  <h2>Rå LLM-svar</h2>
+  <pre style="font-size: 11px;">{{ result.raw_llm_response }}</pre>
+</div>
+
+<p><a href="{{ url_for('feedback.autotune_result', run_id=result.run_id) }}">← Tilbage til forslag</a></p>
+
+{% endblock %}
