@@ -46,8 +46,10 @@ B) DOCUMENT TYPE
      "kreditering af"). null if not found.
 
 C) LINE ITEMS
-5. Extract EVERY line item — description, quantity, unit_price, line_total. Do not
-   skip lines. If a line is unclear, extract what you can and leave unclear fields null.
+5. Extract EVERY line item: description, item_number (varenummer / SKU exactly as
+   printed, including spaces; null if not shown), quantity, unit_price, line_total.
+   Do not skip lines. If a line is unclear, extract what you can and leave unclear
+   fields null.
 
 D) NO AGREEMENT COMPARISON YET
 6. This is extraction only. Leave agreed_unit_price, has_discrepancy, discrepancy_amount,
@@ -71,7 +73,8 @@ A) READ THE INVOICE
 3. document_type: "credit_note" if heading says "Kreditnota", number starts with KN/CN,
    or amounts are negative; else "invoice". For credit notes populate credit_note_handling
    (is_credit_note=true, sign_convention, references_invoice). Else credit_note_handling=null.
-4. Extract every line item: description, quantity, unit_price, line_total.
+4. Extract every line item: description, item_number (varenummer / SKU exactly as
+   printed, including spaces; null if not shown), quantity, unit_price, line_total.
 
 B) MATCH AGREEMENT TO SUPPLIER
 5. Pick the agreement that matches the invoice's supplier (by name; ignore case, A/S,
@@ -79,10 +82,11 @@ B) MATCH AGREEMENT TO SUPPLIER
    and skip C-D.
 
 C) FIND PRICING DISCREPANCIES — THE MOST IMPORTANT PART
-6. For each line item, find the agreement product whose description best matches:
-   - Exact match preferred.
-   - Fall back to fuzzy match on Danish words; ignore plural endings, sizes, item codes.
-   - If no plausible match, set agreed_unit_price=null, has_discrepancy=null,
+6. For each line item, find the agreement product:
+   - PREFER matching by item_number (varenummer) — this is the most reliable signal.
+   - If item_number unavailable or no match, fall back to description fuzzy match
+     on Danish words; ignore plural endings, sizes, packaging.
+   - If no plausible match at all, set agreed_unit_price=null, has_discrepancy=null,
      discrepancy_amount=null and move on.
 7. For matched lines:
    - agreed_unit_price = price from agreement
@@ -124,9 +128,9 @@ catching overcharges is the whole point.
    - If NONE match, leave agreed_unit_price and rebate fields null on every line and
      output the rest unchanged.
 
-3. For EACH line item, find the agreement product whose description best matches:
-   - Exact match preferred. Fall back to fuzzy on Danish words; ignore plural endings,
-     sizes, item codes.
+3. For EACH line item, find the agreement product:
+   - PREFER matching by item_number (varenummer) when present on both sides — most reliable.
+   - Fall back to description fuzzy on Danish words; ignore plural endings, sizes, packaging.
    - If no plausible match: agreed_unit_price=null, has_discrepancy=null,
      discrepancy_amount=null on that line.
    - If matched:

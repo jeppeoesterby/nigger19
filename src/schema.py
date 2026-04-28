@@ -13,6 +13,7 @@ class LineItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     description: Optional[str] = None
+    item_number: Optional[str] = None  # Varenummer / SKU printed on invoice
     quantity: Optional[float] = None
     unit_price: Optional[float] = None
     line_total: Optional[float] = None
@@ -63,6 +64,7 @@ SCHEMA_JSON_EXAMPLE = """{
   "line_items": [
     {
       "description": "string",
+      "item_number": "string (varenummer / SKU as printed) or null",
       "quantity": 0.0,
       "unit_price": 0.0,
       "line_total": 0.0,
