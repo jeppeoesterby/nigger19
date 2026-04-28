@@ -70,10 +70,14 @@ class ModelCall:
 
     raw_text: str
     latency_sec: float
-    input_tokens: int
+    input_tokens: int  # uncached input tokens
     output_tokens: int
     model_id: str
     error: Optional[str] = None
+    # Anthropic prompt caching: cache_creation_tokens are charged at 1.25x
+    # the input rate, cache_read_tokens at 0.1x. Always 0 for Gemini.
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
 
     @property
     def ok(self) -> bool:
@@ -225,6 +229,12 @@ class ClaudeClient:
         usage = getattr(msg, "usage", None)
         in_tok = _safe_int(getattr(usage, "input_tokens", 0)) if usage else 0
         out_tok = _safe_int(getattr(usage, "output_tokens", 0)) if usage else 0
+        cache_create = (
+            _safe_int(getattr(usage, "cache_creation_input_tokens", 0)) if usage else 0
+        )
+        cache_read = (
+            _safe_int(getattr(usage, "cache_read_input_tokens", 0)) if usage else 0
+        )
 
         # If we got no text, attach diagnostic metadata so the user can see
         # WHY the response was empty (stop_reason, block types, etc.) in
@@ -257,6 +267,8 @@ class ClaudeClient:
             input_tokens=in_tok,
             output_tokens=out_tok,
             model_id=model,
+            cache_creation_tokens=cache_create,
+            cache_read_tokens=cache_read,
         )
 
     def call(

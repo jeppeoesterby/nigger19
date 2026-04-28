@@ -88,6 +88,8 @@ def write_report(
             "avg_latency_sec",
             "total_input_tokens",
             "total_output_tokens",
+            "cache_create_tokens",
+            "cache_read_tokens",
             "total_cost_usd",
             "cost_per_doc_usd",
             "failures",
@@ -99,12 +101,16 @@ def write_report(
             "avg_latency_sec",
             "total_input_tokens",
             "total_output_tokens",
+            "cache_create_tokens",
+            "cache_read_tokens",
             "total_cost_usd",
             "cost_per_doc_usd",
             "failures",
         ]
     _write_header(ws, headers)
     for r in summary_rows:
+        cc = r.get("total_cache_creation_tokens", 0)
+        cr = r.get("total_cache_read_tokens", 0)
         if scoring_enabled:
             ws.append(
                 [
@@ -118,6 +124,8 @@ def write_report(
                     round(r["avg_latency_sec"], 2),
                     r["total_input_tokens"],
                     r["total_output_tokens"],
+                    cc,
+                    cr,
                     round(r["total_cost_usd"], 4),
                     round(r["cost_per_doc_usd"], 4),
                     r["failures"],
@@ -131,6 +139,8 @@ def write_report(
                     round(r["avg_latency_sec"], 2),
                     r["total_input_tokens"],
                     r["total_output_tokens"],
+                    cc,
+                    cr,
                     round(r["total_cost_usd"], 4),
                     round(r["cost_per_doc_usd"], 4),
                     r["failures"],

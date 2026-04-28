@@ -264,6 +264,7 @@ def run_one(
     has_agreement = bool(agreement_pdfs) or bool(agreement_text)
 
     total_in = total_out = 0
+    total_cache_create = total_cache_read = 0
     total_latency = 0.0
     total_cost = 0.0
     notes: list[str] = []
@@ -272,14 +273,21 @@ def run_one(
 
     def _accumulate(call: ModelCall, model_key: str) -> None:
         nonlocal total_in, total_out, total_latency, total_cost
+        nonlocal total_cache_create, total_cache_read
+        cc = _tok(getattr(call, "cache_creation_tokens", 0))
+        cr = _tok(getattr(call, "cache_read_tokens", 0))
         total_in += _tok(call.input_tokens)
         total_out += _tok(call.output_tokens)
+        total_cache_create += cc
+        total_cache_read += cr
         total_latency += _lat(call.latency_sec)
         total_cost += cost_usd(
             model_key,
             _tok(call.input_tokens),
             _tok(call.output_tokens),
             cfg_yaml["pricing"],
+            cache_creation_tokens=cc,
+            cache_read_tokens=cr,
         )
         # Stash raw text for debug so we can see what the model actually
         # returned, even when parsing failed or output was empty.
@@ -388,6 +396,8 @@ def run_one(
         "latency_sec": total_latency,
         "input_tokens": total_in,
         "output_tokens": total_out,
+        "cache_creation_tokens": total_cache_create,
+        "cache_read_tokens": total_cache_read,
         "cost_usd": total_cost,
         "notes": "; ".join(notes),
         "per_field": [
@@ -505,6 +515,8 @@ def run(
             "latency_sec": 0.0,
             "input_tokens": 0,
             "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
             "cost_usd": 0.0,
             "notes": reason,
             "per_field": [],
@@ -544,10 +556,13 @@ def run(
                 "latency_sec": 0.0,
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cache_creation_tokens": 0,
+                "cache_read_tokens": 0,
                 "cost_usd": 0.0,
                 "notes": f"internal error: {type(e).__name__}: {e}",
                 "per_field": [],
                 "pred": None,
+                "raw_response": "",
                 "ground_truth": job.ground_truth,
                 "failed": True,
                 "has_ground_truth": job.ground_truth is not None,
@@ -720,6 +735,8 @@ def _summarize(
         total_cost = sum(r["cost_usd"] for r in rows)
         total_in = sum(r["input_tokens"] for r in rows)
         total_out = sum(r["output_tokens"] for r in rows)
+        total_cache_create = sum(r.get("cache_creation_tokens", 0) for r in rows)
+        total_cache_read = sum(r.get("cache_read_tokens", 0) for r in rows)
         avg_lat = sum(r["latency_sec"] for r in rows) / n if n else 0.0
 
         summary.append(
@@ -734,6 +751,8 @@ def _summarize(
                 "avg_latency_sec": avg_lat,
                 "total_input_tokens": total_in,
                 "total_output_tokens": total_out,
+                "total_cache_creation_tokens": total_cache_create,
+                "total_cache_read_tokens": total_cache_read,
                 "total_cost_usd": total_cost,
                 "cost_per_doc_usd": total_cost / n if n else 0.0,
                 "failures": failures,
