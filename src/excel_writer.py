@@ -86,7 +86,20 @@ def write_report(
     ws = wb.create_sheet("Benchmark")
     _write_benchmark(ws, per_invoice_rows)
 
-    # Sheet 3: Findings (human-readable per-invoice analysis)
+    # Sheet 3: Diagnostik — per-pair "WHY" view. One row per (invoice, config)
+    # showing extraction status, line counts, error notes, raw-response excerpt
+    # so a user reviewing missed errors can see WHY (e.g. extraction failed,
+    # no agreement match found, JSON parse failed, empty response).
+    ws = wb.create_sheet("Diagnostik")
+    _write_diagnostics(ws, per_invoice_rows)
+
+    # Sheet 4: Alle linjer — every extracted line across all pairs, with match
+    # status. Lets the user filter "show me all lines for INV-001 across all
+    # models" or "show me lines without agreement match" to debug deeper.
+    ws = wb.create_sheet("Alle linjer")
+    _write_all_lines(ws, per_invoice_rows)
+
+    # Sheet 5: Findings (human-readable per-invoice analysis)
     # Keeps the per-invoice context (totals, rebate, credit-note status) that
     # the flat Fejloversigt deliberately omits.
     ws = wb.create_sheet("Findings")
@@ -549,6 +562,205 @@ def _write_fejloversigt(ws, per_invoice_rows: list[dict]) -> None:
 
     # Column widths
     widths = {1: 22, 2: 16, 3: 16, 4: 38, 5: 16, 6: 14, 7: 8, 8: 18, 9: 16, 10: 16}
+    for idx, w in widths.items():
+        ws.column_dimensions[get_column_letter(idx)].width = w
+
+
+def _classify_status(notes: str, pred: dict | None) -> str:
+    """Classify the runner's `notes` string into a coarse status code.
+
+    Used in the Diagnostik sheet so the user can filter / sort by failure
+    mode. Order matters — earlier patterns win when notes contain multiple.
+    """
+    n = (notes or "").lower()
+    if "circuit breaker" in n or "skipped: config" in n:
+        return "CIRCUIT_BROKEN"
+    if "internal error" in n:
+        return "INTERNAL_ERROR"
+    if "extract error" in n:
+        if "429" in n or "rate" in n:
+            return "EXTRACT_RATE_LIMITED"
+        if "timeout" in n:
+            return "EXTRACT_TIMEOUT"
+        return "EXTRACT_FAILED"
+    if "reason error" in n:
+        return "REASONING_FAILED"
+    if "json parse" in n or "json_parse" in n:
+        return "JSON_PARSE_FAILED"
+    if "schema" in n and "errors" in n:
+        return "SCHEMA_VALIDATION_FAILED"
+    if "empty response" in n or "[empty response debug]" in n:
+        return "EMPTY_RESPONSE"
+    if pred is None or not pred.get("line_items"):
+        # No structured output produced
+        if not n:
+            return "NO_OUTPUT"
+        return "WARNING"
+    if not n:
+        return "OK"
+    return "WARNING"
+
+
+def _write_diagnostics(ws, per_invoice_rows: list[dict]) -> None:
+    """Per (invoice, config) row explaining WHY the model produced what it did.
+
+    Surfaces extraction status, line counts (matched / unmatched / discrepant),
+    token usage, latency, cost, error notes, and a raw-response excerpt so a
+    user reviewing a missed error can immediately see whether the cause is:
+      - extraction failed / rate-limited / timed out
+      - JSON didn't parse
+      - schema validation failed
+      - empty response from the model
+      - lines extracted but didn't match the agreement
+      - circuit breaker tripped
+      - or just OK (the model genuinely didn't see a discrepancy)
+    """
+    headers = [
+        "invoice_id",
+        "config_name",
+        "status",                         # OK / EXTRACT_FAILED / etc.
+        "supplier",
+        "invoice_number",
+        "total_lines",
+        "discrepancies",
+        "matched_no_discrepancy",
+        "unmatched_to_agreement",
+        "not_evaluated",
+        "input_tokens",
+        "output_tokens",
+        "latency_sec",
+        "cost_usd",
+        "notes",
+        "raw_response_excerpt",
+    ]
+    _write_header(ws, headers)
+    for r in per_invoice_rows:
+        pred = r.get("pred") or {}
+        notes = r.get("notes") or ""
+        status = _classify_status(notes, pred)
+        line_items = pred.get("line_items") or []
+        total = len(line_items)
+        disc = sum(1 for li in line_items if li.get("has_discrepancy") is True)
+        matched_no_disc = sum(
+            1
+            for li in line_items
+            if li.get("has_discrepancy") is False
+            and li.get("agreed_unit_price") is not None
+        )
+        unmatched = sum(
+            1
+            for li in line_items
+            if li.get("agreed_unit_price") is None and li.get("has_discrepancy") is not None
+        )
+        not_evaluated = sum(
+            1 for li in line_items if li.get("has_discrepancy") is None
+        )
+        raw = r.get("raw_response") or ""
+        ws.append(
+            [
+                r.get("invoice_id"),
+                r.get("config_name"),
+                status,
+                pred.get("supplier_name") or "—",
+                pred.get("invoice_number") or "—",
+                total,
+                disc,
+                matched_no_disc,
+                unmatched,
+                not_evaluated,
+                int(r.get("input_tokens") or 0),
+                int(r.get("output_tokens") or 0),
+                round(float(r.get("latency_sec") or 0), 2),
+                round(float(r.get("cost_usd") or 0), 4),
+                notes,
+                _clip_for_excel(raw, max_len=2000),
+            ]
+        )
+
+    # Auto-filter on header so users can filter by status
+    last_col = get_column_letter(len(headers))
+    last_row = max(2, ws.max_row)
+    ws.auto_filter.ref = f"A1:{last_col}{last_row}"
+    ws.freeze_panes = "A2"
+
+    widths = {
+        1: 24, 2: 22, 3: 24, 4: 22, 5: 16,
+        6: 8, 7: 8, 8: 10, 9: 10, 10: 8,
+        11: 10, 12: 10, 13: 10, 14: 10,
+        15: 50, 16: 60,
+    }
+    for idx, w in widths.items():
+        ws.column_dimensions[get_column_letter(idx)].width = w
+    # Wrap text on notes + raw_response_excerpt
+    for col_idx in (15, 16):
+        for row in ws.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx):
+            for cell in row:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+
+def _write_all_lines(ws, per_invoice_rows: list[dict]) -> None:
+    """One row per extracted line item (across all invoices and configs).
+
+    Lets the user filter to e.g. "show me all unmatched lines from
+    gemini-pure" to see which products the model couldn't find in the
+    agreement — often the reason it missed a discrepancy.
+    """
+    headers = [
+        "invoice_id",
+        "config_name",
+        "line_idx",
+        "item_number",
+        "description",
+        "quantity",
+        "unit_price",
+        "agreed_unit_price",
+        "line_total",
+        "has_discrepancy",
+        "discrepancy_amount",
+        "match_status",
+    ]
+    _write_header(ws, headers)
+    for r in per_invoice_rows:
+        pred = r.get("pred") or {}
+        for i, li in enumerate(pred.get("line_items") or []):
+            agreed = li.get("agreed_unit_price")
+            has_disc = li.get("has_discrepancy")
+            if has_disc is True:
+                status = "discrepancy"
+            elif has_disc is False and agreed is not None:
+                status = "matched_no_discrepancy"
+            elif agreed is None and has_disc is not None:
+                status = "unmatched"
+            else:
+                status = "not_evaluated"
+            ws.append(
+                [
+                    r.get("invoice_id"),
+                    r.get("config_name"),
+                    i,
+                    (li.get("item_number") or ""),
+                    (li.get("description") or "")[:120],
+                    li.get("quantity"),
+                    li.get("unit_price"),
+                    li.get("agreed_unit_price"),
+                    li.get("line_total"),
+                    has_disc if has_disc is not None else "",
+                    li.get("discrepancy_amount"),
+                    status,
+                ]
+            )
+
+    last_col = get_column_letter(len(headers))
+    last_row = max(2, ws.max_row)
+    ws.auto_filter.ref = f"A1:{last_col}{last_row}"
+    ws.freeze_panes = "A2"
+
+    for col in (7, 8, 9, 11):
+        for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
+            for cell in row:
+                cell.number_format = '#,##0.00 "kr."'
+
+    widths = {1: 22, 2: 22, 3: 6, 4: 16, 5: 40, 6: 8, 7: 12, 8: 14, 9: 12, 10: 12, 11: 14, 12: 22}
     for idx, w in widths.items():
         ws.column_dimensions[get_column_letter(idx)].width = w
 
