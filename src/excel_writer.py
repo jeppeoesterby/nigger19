@@ -73,9 +73,69 @@ def write_report(
 ) -> None:
     wb = Workbook()
 
-    # Sheet 1: Summary
+    # Sheet 1: Findings (human-readable per-invoice analysis)
+    # This is the FIRST sheet because non-technical users open the workbook here
+    # to see at a glance: what did the model extract, what discrepancies did it
+    # find, and did anything fail.
     ws = wb.active
-    ws.title = "Summary"
+    ws.title = "Findings"
+    headers = [
+        "invoice_id",
+        "config_name",
+        "supplier",
+        "invoice_number",
+        "invoice_date",
+        "document_type",
+        "currency",
+        "total",
+        "line_count",
+        "discrepancy_count",
+        "discrepancies_detail",
+        "rebate_status",
+        "credit_note_info",
+        "status",
+    ]
+    _write_header(ws, headers)
+    for r in per_invoice_rows:
+        pred = r.get("pred") or {}
+        notes = (r.get("notes") or "").strip()
+        line_items = pred.get("line_items") or []
+        discrepancies = [li for li in line_items if li.get("has_discrepancy")]
+        discrepancy_text = _format_discrepancies(discrepancies) if discrepancies else (
+            "(ingen uoverensstemmelser fundet)" if line_items else "(ingen line items)"
+        )
+        ws.append(
+            [
+                r.get("invoice_id"),
+                r.get("config_name"),
+                pred.get("supplier_name") or "—",
+                pred.get("invoice_number") or "—",
+                pred.get("invoice_date") or "—",
+                pred.get("document_type") or "—",
+                pred.get("currency") or "—",
+                pred.get("total") if pred.get("total") is not None else "—",
+                len(line_items),
+                len(discrepancies),
+                discrepancy_text,
+                _format_rebate(pred),
+                _format_credit_note(pred),
+                "OK" if not notes else f"FEJL: {notes}",
+            ]
+        )
+    # Wide cols for the multi-line text columns + wrap-text
+    for col_idx in (11, 12, 13, 14):
+        col_letter = get_column_letter(col_idx)
+        ws.column_dimensions[col_letter].width = 60
+        for row in ws.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx):
+            for cell in row:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+    # Sensible widths for the short cols
+    short_widths = {1: 24, 2: 18, 3: 22, 4: 16, 5: 12, 6: 14, 7: 8, 8: 10, 9: 6, 10: 6}
+    for idx, w in short_widths.items():
+        ws.column_dimensions[get_column_letter(idx)].width = w
+
+    # Sheet 2: Summary
+    ws = wb.create_sheet("Summary")
     if scoring_enabled:
         headers = [
             "config_name",
@@ -313,6 +373,76 @@ def _clip_for_excel(s: str, max_len: int = 32000) -> str:
 
 def json_pretty(obj: Any) -> str:
     return json.dumps(obj, indent=2, ensure_ascii=False, default=str)
+
+
+def _fmt_num(v) -> str:
+    if v is None:
+        return "?"
+    try:
+        return f"{float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _format_discrepancies(items: list[dict]) -> str:
+    """One human-readable line per discrepant line item."""
+    lines = []
+    for i, li in enumerate(items, start=1):
+        desc = (li.get("description") or "(ukendt)").strip()
+        qty = li.get("quantity")
+        unit = li.get("unit_price")
+        agreed = li.get("agreed_unit_price")
+        diff_amt = li.get("discrepancy_amount")
+        sign = ""
+        if isinstance(diff_amt, (int, float)):
+            sign = "supplier overopkrævet" if diff_amt > 0 else "supplier underopkrævet" if diff_amt < 0 else "ingen difference"
+        qty_str = _fmt_num(qty) if qty is not None else "?"
+        lines.append(
+            f"{i}. {desc[:80]}\n"
+            f"   Aftalt: {_fmt_num(agreed)}/stk · Faktureret: {_fmt_num(unit)}/stk · "
+            f"Mængde: {qty_str}\n"
+            f"   Difference: {_fmt_num(diff_amt)} DKK ({sign})"
+        )
+    return "\n\n".join(lines)
+
+
+def _format_rebate(pred: dict) -> str:
+    applied = pred.get("rebate_applied")
+    expected = pred.get("expected_rebate")
+    if applied is None and expected is None:
+        return "(intet rabat-felt udfyldt)"
+    if expected is None:
+        return f"Faktureret rabat: {_fmt_num(applied)} DKK (ingen forventet rabat beregnet)"
+    if applied is None:
+        return f"Forventet rabat: {_fmt_num(expected)} DKK (intet rabat-felt på faktura)"
+    try:
+        diff = float(expected) - float(applied)
+    except (TypeError, ValueError):
+        diff = None
+    base = (
+        f"Forventet: {_fmt_num(expected)} DKK\n"
+        f"Faktureret: {_fmt_num(applied)} DKK"
+    )
+    if diff is not None:
+        if abs(diff) < 1.0:
+            base += f"\nDifference: {_fmt_num(diff)} DKK (OK, indenfor tolerance)"
+        else:
+            base += f"\nDifference: {_fmt_num(diff)} DKK ⚠ rabat-afvigelse"
+    return base
+
+
+def _format_credit_note(pred: dict) -> str:
+    cnh = pred.get("credit_note_handling")
+    doctype = pred.get("document_type")
+    if doctype == "credit_note":
+        if not isinstance(cnh, dict):
+            return "Kreditnota — men credit_note_handling mangler ⚠"
+        ref = cnh.get("references_invoice") or "(ingen reference fundet)"
+        sign = cnh.get("sign_convention") or "(ukendt)"
+        return f"Kreditnota\nFortegn: {sign}\nRef. faktura: {ref}"
+    if isinstance(cnh, dict) and cnh.get("is_credit_note"):
+        return "Inkonsistens: document_type=invoice men credit_note_handling.is_credit_note=true ⚠"
+    return "(ikke en kreditnota)"
 
 
 def json_diff(gt: dict, pred: dict) -> str:

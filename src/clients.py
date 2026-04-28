@@ -238,6 +238,7 @@ class ClaudeClient:
         msg = self._client.messages.create(
             model=model,
             max_tokens=self.max_tokens,
+            temperature=0,
             messages=[{"role": "user", "content": content}],
         )
         latency = time.perf_counter() - t0
@@ -351,6 +352,7 @@ class GeminiClient:
             config=self._types.GenerateContentConfig(
                 max_output_tokens=self.max_tokens,
                 response_mime_type="application/json",
+                temperature=0,
             ),
         )
         latency = time.perf_counter() - t0
