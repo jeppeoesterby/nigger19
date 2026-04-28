@@ -80,7 +80,13 @@ def write_report(
     ws.title = "Fejloversigt"
     _write_fejloversigt(ws, per_invoice_rows)
 
-    # Sheet 2: Findings (human-readable per-invoice analysis)
+    # Sheet 2: Benchmark — pivot view (one row per unique error, one column per
+    # model). Lets the user see at a glance which models caught which errors —
+    # consensus errors at the top, controversial ones below.
+    ws = wb.create_sheet("Benchmark")
+    _write_benchmark(ws, per_invoice_rows)
+
+    # Sheet 3: Findings (human-readable per-invoice analysis)
     # Keeps the per-invoice context (totals, rebate, credit-note status) that
     # the flat Fejloversigt deliberately omits.
     ws = wb.create_sheet("Findings")
@@ -545,6 +551,181 @@ def _write_fejloversigt(ws, per_invoice_rows: list[dict]) -> None:
     widths = {1: 22, 2: 16, 3: 16, 4: 38, 5: 16, 6: 14, 7: 8, 8: 18, 9: 16, 10: 16}
     for idx, w in widths.items():
         ws.column_dimensions[get_column_letter(idx)].width = w
+
+
+def _write_benchmark(ws, per_invoice_rows: list[dict]) -> None:
+    """Pivot view: one row per unique error, one column per model.
+
+    Dedup key: (invoice_number, item_number) when item_number is present;
+    otherwise (invoice_number, lowercased description). Imperfect matching
+    across models is itself informative — if two rows look "the same" but
+    weren't merged, it means models extracted different keys, which the
+    user should know about.
+
+    Sort order: errors caught by all models first (likely real), then by
+    max sum_overbetalt across models. Controversial errors (caught by
+    only some models) sink to the middle/bottom for inspection.
+    """
+    # Collect models in first-seen order
+    model_order: list[str] = []
+    seen: set[str] = set()
+    for r in per_invoice_rows:
+        cfg = r.get("config_name") or "(unknown)"
+        if cfg not in seen:
+            seen.add(cfg)
+            model_order.append(cfg)
+
+    # Build pivot map keyed by error signature
+    by_key: dict[tuple, dict] = {}
+    for r in per_invoice_rows:
+        cfg = r.get("config_name") or "(unknown)"
+        pred = r.get("pred") or {}
+        invoice_no = pred.get("invoice_number") or r.get("invoice_id") or ""
+        for li in pred.get("line_items") or []:
+            if not li.get("has_discrepancy"):
+                continue
+            varenr = (li.get("item_number") or "").strip() if li.get("item_number") else ""
+            desc = (li.get("description") or "").strip()
+            sig = varenr or desc.lower()
+            if not sig:
+                # Skip malformed rows with no description and no item_number;
+                # they can't be deduped meaningfully.
+                continue
+            key = (str(invoice_no), sig)
+            qty = _coerce_float(li.get("quantity"))
+            unit = _coerce_float(li.get("unit_price"))
+            agreed = _coerce_float(li.get("agreed_unit_price"))
+            sum_over = _coerce_float(li.get("discrepancy_amount"))
+            entry = by_key.setdefault(
+                key,
+                {
+                    "faktura": invoice_no,
+                    "varenummer": varenr,
+                    "beskrivelse": desc,
+                    "antal": qty,
+                    "unit_price": unit,
+                    "agreed_unit_price": agreed,
+                    "by_model": {},
+                },
+            )
+            # First non-null value wins for the consensus columns. Different
+            # models reporting different prices on the same key is rare but
+            # possible; the by_model column shows what each one said.
+            if entry["antal"] is None and qty is not None:
+                entry["antal"] = qty
+            if entry["unit_price"] is None and unit is not None:
+                entry["unit_price"] = unit
+            if entry["agreed_unit_price"] is None and agreed is not None:
+                entry["agreed_unit_price"] = agreed
+            if sum_over is not None:
+                entry["by_model"][cfg] = sum_over
+
+    n_models = len(model_order)
+    total_unique_errors = len(by_key)
+
+    # --- Top: per-model summary ---
+    title = ws.cell(row=1, column=1, value="Benchmark — pr. unik fejl, pr. model")
+    title.font = Font(bold=True, size=14)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max(8, 4 + n_models))
+
+    summary_headers = [
+        "Model",
+        "Fejl fundet",
+        "Coverage",
+        "Total sum overbetalt (DKK)",
+    ]
+    for col, h in enumerate(summary_headers, start=1):
+        c = ws.cell(row=3, column=col, value=h)
+        c.fill = HEADER_FILL
+        c.font = HEADER_FONT
+    row = 4
+    for m in model_order:
+        caught = sum(1 for e in by_key.values() if m in e["by_model"])
+        total_sum = round(sum(e["by_model"].get(m, 0) for e in by_key.values()), 2)
+        coverage = f"{caught}/{total_unique_errors}" if total_unique_errors else "—"
+        ws.cell(row=row, column=1, value=m)
+        ws.cell(row=row, column=2, value=caught)
+        ws.cell(row=row, column=3, value=coverage)
+        c_total = ws.cell(row=row, column=4, value=total_sum)
+        c_total.number_format = '#,##0.00 "kr."'
+        row += 1
+
+    # --- Detail pivot ---
+    detail_start = row + 2
+    title2 = ws.cell(
+        row=detail_start, column=1, value="Pivot — én række pr. unik fejl"
+    )
+    title2.font = Font(bold=True, size=12)
+    ws.merge_cells(
+        start_row=detail_start,
+        start_column=1,
+        end_row=detail_start,
+        end_column=max(8, 7 + n_models),
+    )
+
+    fixed_headers = [
+        "Faktura Nummer",
+        "Varenummer",
+        "Beskrivelse",
+        "Antal",
+        "Faktisk købspris",
+        "Rabatpris (aftalt)",
+    ]
+    headers = fixed_headers + model_order + ["Found by"]
+    header_row = detail_start + 2
+    for col, h in enumerate(headers, start=1):
+        c = ws.cell(row=header_row, column=col, value=h)
+        c.fill = HEADER_FILL
+        c.font = HEADER_FONT
+
+    # Sort: most-caught first (consensus = real errors), then by largest
+    # max-amount across models (so big-money items surface).
+    def _sort_key(e: dict):
+        caught_n = len(e["by_model"])
+        max_amt = max(e["by_model"].values(), default=0)
+        return (-caught_n, -max_amt)
+
+    sorted_entries = sorted(by_key.values(), key=_sort_key)
+    row = header_row + 1
+    n_fixed = len(fixed_headers)
+    for e in sorted_entries:
+        ws.cell(row=row, column=1, value=e["faktura"])
+        ws.cell(row=row, column=2, value=e["varenummer"])
+        ws.cell(row=row, column=3, value=(e["beskrivelse"] or "")[:120])
+        ws.cell(row=row, column=4, value=e["antal"])
+        c_unit = ws.cell(row=row, column=5, value=e["unit_price"])
+        c_agreed = ws.cell(row=row, column=6, value=e["agreed_unit_price"])
+        c_unit.number_format = '#,##0.00 "kr."'
+        c_agreed.number_format = '#,##0.00 "kr."'
+        for i, m in enumerate(model_order):
+            v = e["by_model"].get(m)
+            cell = ws.cell(row=row, column=n_fixed + 1 + i)
+            if v is None:
+                cell.value = "—"
+                cell.alignment = Alignment(horizontal="center")
+            else:
+                cell.value = round(v, 2)
+                cell.number_format = '#,##0.00 "kr."'
+        ws.cell(
+            row=row,
+            column=n_fixed + 1 + n_models,
+            value=f"{len(e['by_model'])}/{n_models}",
+        ).alignment = Alignment(horizontal="center")
+        row += 1
+
+    # Auto-filter + freeze
+    if sorted_entries:
+        last_col_letter = get_column_letter(len(headers))
+        ws.auto_filter.ref = f"A{header_row}:{last_col_letter}{row - 1}"
+    ws.freeze_panes = ws.cell(row=header_row + 1, column=4).coordinate
+
+    # Column widths
+    fixed_widths = {1: 16, 2: 16, 3: 36, 4: 8, 5: 16, 6: 18}
+    for idx, w in fixed_widths.items():
+        ws.column_dimensions[get_column_letter(idx)].width = w
+    for i, _ in enumerate(model_order):
+        ws.column_dimensions[get_column_letter(n_fixed + 1 + i)].width = 18
+    ws.column_dimensions[get_column_letter(n_fixed + 1 + n_models)].width = 12
 
 
 def _coerce_float(v):
