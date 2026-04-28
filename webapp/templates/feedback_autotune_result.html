@@ -1,24 +1,24 @@
 {% extends "base.html" %}
-{% block title %}Autotune resultat — {{ result.run_id }}{% endblock %}
+{% block title %}Auto-tune result — {{ result.run_id }}{% endblock %}
 {% block content %}
 
 <div class="card">
-  <h2>Autotune resultat</h2>
-  <p class="muted">Run {{ result.run_id }} · {{ result.timestamp }} · {{ result.feedback_count }} feedback-entries analyseret</p>
+  <h2>Auto-tune result</h2>
+  <p class="muted">Run {{ result.run_id }} · {{ result.timestamp }} · {{ result.feedback_count }} feedback entries analyzed</p>
   {% if result.error %}
-    <p class="err">Fejl: {{ result.error }}</p>
+    <p class="err">Error: {{ result.error }}</p>
   {% endif %}
-  <h3 style="font-size: 14px; margin-top: 10px;">Overordnet diagnose</h3>
+  <h3 style="font-size: 14px; margin-top: 10px;">Overall diagnosis</h3>
   <p style="background: var(--panel-2); padding: 12px; border-radius: 6px;">{{ result.overall_diagnosis or '—' }}</p>
   <p style="font-size: 12px; margin-top: 10px;">
-    <a href="{{ url_for('feedback.autotune_diagnostics', run_id=result.run_id) }}">Se hvad assistenten "så" (rå data) →</a>
+    <a href="{{ url_for('feedback.autotune_diagnostics', run_id=result.run_id) }}">See what the assistant "saw" (raw data) →</a>
   </p>
 </div>
 
 <div class="card">
-  <h2>Forslag ({{ result.suggestions | length }})</h2>
+  <h2>Suggestions ({{ result.suggestions | length }})</h2>
   {% if not result.suggestions %}
-    <p class="muted">Ingen forslag bestod validering. Se afviste forslag nedenfor.</p>
+    <p class="muted">No suggestions passed validation. See rejected suggestions below.</p>
   {% endif %}
   {% for s in result.suggestions %}
     <div style="background: var(--panel-2); border-radius: 6px; padding: 16px; margin-bottom: 16px; border-left: 4px solid
@@ -27,7 +27,7 @@
       {% else %}var(--err){% endif %};">
 
       <div style="display: flex; justify-content: space-between; align-items: baseline;">
-        <strong>Forslag {{ s.suggestion_id }} · {{ s.block }}</strong>
+        <strong>Suggestion {{ s.suggestion_id }} · {{ s.block }}</strong>
         <span class="badge
           {% if s.confidence == 'high' %}done
           {% elif s.confidence == 'medium' %}starting
@@ -37,9 +37,9 @@
       <p style="margin-top: 10px;">{{ s.rationale }}</p>
 
       <details style="margin-top: 10px;">
-        <summary style="cursor: pointer; color: var(--accent);">Vis diff (find / replace)</summary>
+        <summary style="cursor: pointer; color: var(--accent);">Show diff (find / replace)</summary>
         <div style="margin-top: 8px;">
-          <p class="muted" style="font-size: 12px; margin: 4px 0;">FIND (skal eksistere verbatim i prompten):</p>
+          <p class="muted" style="font-size: 12px; margin: 4px 0;">FIND (must exist verbatim in the prompt):</p>
           <pre style="background: #3a1a1a; border: 1px solid #f87171; color: #fca5a5;">{{ s.find }}</pre>
           <p class="muted" style="font-size: 12px; margin: 4px 0;">REPLACE WITH:</p>
           <pre style="background: #1a3a1a; border: 1px solid #4ade80; color: #bbf7d0;">{{ s.replace }}</pre>
@@ -47,7 +47,7 @@
       </details>
 
       <details style="margin-top: 10px;">
-        <summary style="cursor: pointer; color: var(--accent);">Beviser ({{ s.supporting_feedback_ids | length }} feedback-entries)</summary>
+        <summary style="cursor: pointer; color: var(--accent);">Evidence ({{ s.supporting_feedback_ids | length }} feedback entries)</summary>
         <p class="muted" style="font-size: 13px; margin: 6px 0;">{{ s.evidence_summary }}</p>
         <ul style="font-size: 12px; margin-left: 16px;">
           {% for fid in s.supporting_feedback_ids %}
@@ -57,10 +57,10 @@
               {% if fb %}
                 {{ fb.config_name }} · {{ fb.invoice_id }} · {{ fb.supplier_canonical or fb.supplier_extracted or '?' }} · {{ fb.agreement_type }}
                 {% if fb.run_filename %}
-                  · <a href="{{ url_for('feedback.review', filename=fb.run_filename, invoice_id=fb.invoice_id, config_name=fb.config_name) }}">åbn review</a>
+                  · <a href="{{ url_for('feedback.review', filename=fb.run_filename, invoice_id=fb.invoice_id, config_name=fb.config_name) }}">open review</a>
                 {% endif %}
               {% else %}
-                <span class="warn">(ikke fundet)</span>
+                <span class="warn">(not found)</span>
               {% endif %}
             </li>
           {% endfor %}
@@ -69,10 +69,10 @@
 
       <form method="post" action="{{ url_for('feedback.autotune_apply_one', run_id=result.run_id, suggestion_id=s.suggestion_id) }}" style="margin-top: 14px;">
         <details style="margin-bottom: 10px;">
-          <summary style="cursor: pointer; color: var(--accent); font-size: 12px;">Rediger replace-tekst før anvendelse (valgfrit)</summary>
-          <textarea name="override_replace" rows="4" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 8px; border-radius: 4px; font-family: monospace; font-size: 12px; margin-top: 6px;" placeholder="Lad være tom for at bruge forslaget som det er.">{{ s.replace }}</textarea>
+          <summary style="cursor: pointer; color: var(--accent); font-size: 12px;">Edit replace text before applying (optional)</summary>
+          <textarea name="override_replace" rows="4" style="width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 8px; border-radius: 4px; font-family: monospace; font-size: 12px; margin-top: 6px;" placeholder="Leave empty to use the suggestion as-is.">{{ s.replace }}</textarea>
         </details>
-        <button type="submit">Anvend forslag</button>
+        <button type="submit">Apply suggestion</button>
       </form>
 
     </div>
@@ -81,8 +81,8 @@
 
 {% if result.rejected_by_llm %}
 <div class="card">
-  <h2>Overvejet men afvist af LLM ({{ result.rejected_by_llm | length }})</h2>
-  <p class="muted">Mønstre LLM bemærkede men valgte IKKE at handle på (transparens-sektion).</p>
+  <h2>Considered but rejected by the LLM ({{ result.rejected_by_llm | length }})</h2>
+  <p class="muted">Patterns the LLM noticed but chose NOT to act on (transparency section).</p>
   {% for r in result.rejected_by_llm %}
     <div style="background: var(--panel-2); border-radius: 6px; padding: 12px; margin-bottom: 8px;">
       <strong>{{ r.pattern }}</strong>
@@ -94,13 +94,13 @@
 
 {% if result.rejected_by_validation %}
 <div class="card">
-  <h2>Afvist af validering ({{ result.rejected_by_validation | length }})</h2>
-  <p class="muted">Forslag LLM lavede men som ikke bestod sikkerhedstjek (fx for få beviser, hallucineret tekst, ukendt block).</p>
+  <h2>Rejected by validation ({{ result.rejected_by_validation | length }})</h2>
+  <p class="muted">Suggestions the LLM produced but that failed safety checks (e.g. too few supporting cases, hallucinated text, unknown block).</p>
   {% for s in result.rejected_by_validation %}
     <div style="background: var(--panel-2); border-radius: 6px; padding: 12px; margin-bottom: 8px;">
       <strong>{{ s.block }}</strong> · <span class="err">{{ s.rejection_reason }}</span>
       <p class="muted" style="margin: 4px 0; font-size: 12px;">{{ s.rationale }}</p>
-      <details><summary class="muted" style="cursor: pointer; font-size: 12px;">Vis tilsigtet diff</summary>
+      <details><summary class="muted" style="cursor: pointer; font-size: 12px;">Show intended diff</summary>
         <pre style="font-size: 11px;">FIND: {{ s.find }}
 REPLACE: {{ s.replace }}</pre>
       </details>
@@ -110,8 +110,8 @@ REPLACE: {{ s.replace }}</pre>
 {% endif %}
 
 <p>
-  <a href="{{ url_for('feedback.autotune_index') }}">← Tilbage til autotune</a> ·
-  <a href="{{ url_for('feedback.regression_index') }}">Kør regression-test →</a>
+  <a href="{{ url_for('feedback.autotune_index') }}">← Back to auto-tune</a> ·
+  <a href="{{ url_for('feedback.regression_index') }}">Run regression test →</a>
 </p>
 
 {% endblock %}

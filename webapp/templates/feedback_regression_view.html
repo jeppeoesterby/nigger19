@@ -3,47 +3,47 @@
 {% block content %}
 
 <div class="card">
-  <h2>Regression-kørsel #{{ state.id }}</h2>
-  <p class="muted">Startet {{ state.started_at }} · {{ state.config_names | join(', ') }}</p>
+  <h2>Regression run #{{ state.id }}</h2>
+  <p class="muted">Started {{ state.started_at }} · {{ state.config_names | join(', ') }}</p>
   <p>
     Status:
     {% if state.status == 'done' %}<span class="badge done">done</span>
     {% elif state.status == 'error' %}<span class="badge error">error</span>
     {% else %}<span class="badge running">{{ state.status }}</span>{% endif %}
-    · Fremskridt: {{ state.completed_pairs }} / {{ state.total_pairs }}
+    · Progress: {{ state.completed_pairs }} / {{ state.total_pairs }}
   </p>
-  {% if state.error %}<p class="err">Fejl: {{ state.error }}</p>{% endif %}
+  {% if state.error %}<p class="err">Error: {{ state.error }}</p>{% endif %}
 </div>
 
 <div class="card">
-  <h2>Sammenligning vs. feedback ground truth</h2>
+  <h2>Comparison vs. feedback ground truth</h2>
   <div class="grid-2">
-    <div class="stat"><div class="label">Forbedringer</div><div class="value ok">{{ improvements }}</div></div>
-    <div class="stat"><div class="label">Regressioner</div><div class="value err">{{ regressions }}</div></div>
-    <div class="stat"><div class="label">Stabile</div><div class="value">{{ stable }}</div></div>
-    <div class="stat"><div class="label">Nye findings</div><div class="value warn">{{ new_findings }}</div></div>
+    <div class="stat"><div class="label">Improvements</div><div class="value ok">{{ improvements }}</div></div>
+    <div class="stat"><div class="label">Regressions</div><div class="value err">{{ regressions }}</div></div>
+    <div class="stat"><div class="label">Stable</div><div class="value">{{ stable }}</div></div>
+    <div class="stat"><div class="label">New findings</div><div class="value warn">{{ new_findings }}</div></div>
   </div>
   <p class="muted" style="margin-top: 10px; font-size: 12px;">
-    Forbedringer = (tidligere missede fejl der nu er fanget) + (tidligere falske positiver der nu er droppet).
-    Regressioner = tidligere korrekte fejl der nu missed.
-    Nye findings = uoverensstemmelser modellen flagede denne gang som ikke er kategoriseret i feedback (kan være rigtige eller falske).
+    Improvements = (previously missed errors now caught) + (previously false positives now dropped).
+    Regressions = previously correct errors now missed.
+    New findings = discrepancies the model flagged this run that aren't categorized in feedback yet (could be real or false).
   </p>
 </div>
 
 <div class="card">
-  <h2>Per (faktura, model)</h2>
+  <h2>Per (invoice, model)</h2>
   {% if state.results %}
     <table>
       <thead><tr>
-        <th>Faktura</th>
+        <th>Invoice</th>
         <th>Model</th>
-        <th>Stadig fanget</th>
-        <th>Nu missed</th>
-        <th>Nu fanget</th>
-        <th>Stadig missed</th>
-        <th>FP nu droppet</th>
-        <th>FP stadig</th>
-        <th>Nye</th>
+        <th>Still caught</th>
+        <th>Now missed</th>
+        <th>Now caught</th>
+        <th>Still missed</th>
+        <th>FP dropped</th>
+        <th>FP still present</th>
+        <th>New</th>
       </tr></thead>
       <tbody>
         {% for r in state.results %}
@@ -67,7 +67,7 @@
       </tbody>
     </table>
   {% else %}
-    <p class="muted">Ingen resultater endnu — vent til kørslen er færdig (refresh siden).</p>
+    <p class="muted">No results yet — wait until the run finishes (refresh page).</p>
   {% endif %}
 </div>
 
@@ -79,7 +79,7 @@
 </div>
 {% endif %}
 
-<p><a href="{{ url_for('feedback.regression_index') }}">← Tilbage til regression</a></p>
+<p><a href="{{ url_for('feedback.regression_index') }}">← Back to regression</a></p>
 
 {% if state.status not in ('done', 'error') %}
 <script>setTimeout(() => location.reload(), 4000);</script>

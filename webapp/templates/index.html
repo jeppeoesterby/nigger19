@@ -2,17 +2,17 @@
 {% block content %}
 
 <div class="card">
-  <h2>Sådan optimerer du prompten — kort guide</h2>
-  <p style="color: var(--text);">DiFacto LLM Eval auditerer leverandør-fakturaer mod prisaftaler og finder uoverensstemmelser. Internt bruges platformen til løbende at gøre prompten skarpere baseret på rigtige reviews.</p>
+  <h2>How to optimize the prompt — quick guide</h2>
+  <p style="color: var(--text);">DiFacto LLM Eval audits supplier invoices against price agreements and surfaces discrepancies. Internally, the platform is used to continuously sharpen the prompt based on real reviews.</p>
   <ol style="color: var(--text); margin-top: 8px;">
-    <li><strong>Upload &amp; kør</strong> — Læg fakturaer (PDF/Excel) og prisaftaler ind, vælg modeller, klik <em>Start evaluation</em>. Du får en Excel-rapport.</li>
-    <li><strong>Læs Excel-rapporten</strong> — start med fanen <em>Fejloversigt</em> (én linje pr. fundne fejl, med model som filter-kolonne). <em>Benchmark</em> sammenligner modeller side-om-side pr. unik fejl. <em>Diagnostik</em> forklarer HVORFOR en model missede noget (extraction-fejl, ingen aftale-match, json parse-fejl, tomt svar, mv). <em>Alle linjer</em> viser hver eneste extraherede linje med match-status.</li>
-    <li><strong>Giv feedback</strong> — Gå til <a href="{{ url_for('feedback.index') }}">Feedback</a> og markér: hvilke fejl modellen fandt korrekt, hvilke var falske positiver, og hvilke MISSEDE den (vigtigste signal). Tag aftaletype og leverandør.</li>
-    <li><strong>Kig i Insights</strong> — Per model / leverandør / aftaletype: precision &amp; recall. Heuristiske mønstre i missede fejl ("små per-unit diffs", "manglende varenummer", mv).</li>
-    <li><strong>Tweak prompten</strong> — Skift teksten på <a href="{{ url_for('prompts_page') }}">Prompts</a>-siden. Ændringen bruges fra næste run.</li>
-    <li><strong>Regression-test</strong> — Kør samme feedback'ede fakturaer igennem ny prompt. Systemet rapporterer pr. (faktura, model): forbedringer, regressioner, stabile, nye findings.</li>
+    <li><strong>Upload &amp; run</strong> — drop in invoices (PDF/Excel) and price agreements, pick models, click <em>Start evaluation</em>. You get an Excel report.</li>
+    <li><strong>Read the Excel report</strong> — start with the <em>Audit Findings</em> tab (one row per error found, with model as a filter column). <em>Benchmark</em> compares models side-by-side per unique error. <em>Diagnostics</em> explains WHY a model missed something (extraction error, no agreement match, JSON parse failure, empty response, etc.). <em>All Lines</em> shows every extracted line with its match status.</li>
+    <li><strong>Give feedback</strong> — go to <a href="{{ url_for('feedback.index') }}">Feedback</a> and mark: which errors the model flagged correctly, which were false positives, and which it MISSED (most important signal). Tag agreement type and supplier.</li>
+    <li><strong>Check Insights</strong> — per model / supplier / agreement type: precision &amp; recall. Heuristic patterns in missed errors ("small per-unit diffs", "missing item numbers", etc.).</li>
+    <li><strong>Tweak the prompt</strong> — edit on the <a href="{{ url_for('prompts_page') }}">Prompts</a> page, or use Auto-tune to get LLM-suggested edits with cited evidence. Changes are versioned with one-click rollback.</li>
+    <li><strong>Regression test</strong> — re-run the same feedback'd invoices through the new prompt. The system reports per (invoice, model): improvements, regressions, stable, new findings.</li>
   </ol>
-  <p class="muted" style="font-size: 12px; margin-top: 10px;">Pro-tip: selv 5-10 grundige feedback-reviews giver brugbar data til Insights og regression-tests. Du behøver ikke gennemgå alt.</p>
+  <p class="muted" style="font-size: 12px; margin-top: 10px;">Pro-tip: even 5-10 thorough reviews produce usable data for Insights and regression tests. You don't need to review everything.</p>
 </div>
 
 <div class="card">
