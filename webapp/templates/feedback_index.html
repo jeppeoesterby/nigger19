@@ -3,38 +3,38 @@
 {% block content %}
 
 <div class="card">
-  <h2>Sådan giver du feedback der gør prompten bedre</h2>
-  <p style="color: var(--text);">Feedback er rå data der driver prompt-iteration. Hver markering bidrager til to ting: <strong>Insights</strong> (hvor prompten halter) og <strong>regression-tests</strong> (verificerer at prompt-ændringer faktisk hjælper).</p>
+  <h2>How to give feedback that improves the prompt</h2>
+  <p style="color: var(--text);">Feedback is the raw data that drives prompt iteration. Every mark you make feeds two things: <strong>Insights</strong> (where the prompt is weak) and <strong>regression tests</strong> (verifying that prompt changes actually help).</p>
 
   <h3 style="font-size: 14px; margin-top: 12px;">Workflow</h3>
   <ol style="color: var(--text); font-size: 14px;">
-    <li>Vælg et tidligere run (nederst på dashboardet).</li>
-    <li>For hvert (faktura, model)-par: klik <em>Tilføj</em>.</li>
-    <li>For hver fejl modellen flagede: vælg verdict — <code>correct</code>, <code>false_positive</code>, eller <code>wrong_amount</code> (rigtigt sted, forkert beløb).</li>
-    <li>Tilføj fejl modellen <strong>missede</strong> — det er det vigtigste signal til prompt-tuning. Skriv: varenummer, beskrivelse, faktureret pris, aftalt pris, sum overbetalt.</li>
-    <li>Tag aftaletype (price_agreement / index_agreement / project_based / framework / other) og kanonisk leverandørnavn (fx "STARK").</li>
-    <li>Gem.</li>
+    <li>Pick a past run (at the bottom of this dashboard).</li>
+    <li>For each (invoice, model) cell: click <em>Add</em>.</li>
+    <li>For each error the model flagged, set the verdict — <code>correct</code>, <code>false_positive</code>, or <code>wrong_amount</code> (right line, wrong number).</li>
+    <li>Add errors the model <strong>missed</strong> — this is the most valuable signal for prompt tuning. Provide: item number, description, charged price, agreed price, overpayment.</li>
+    <li>Tag agreement type (price_agreement / index_agreement / project_based / framework / other) and the canonical supplier name (e.g. "STARK").</li>
+    <li>Save.</li>
   </ol>
 
-  <h3 style="font-size: 14px; margin-top: 12px;">Du behøver IKKE</h3>
+  <h3 style="font-size: 14px; margin-top: 12px;">You DON'T need to</h3>
   <ul style="color: var(--text); font-size: 14px;">
-    <li>Gennemgå alle fakturaer — selv 5-10 grundige reviews giver brugbar data.</li>
-    <li>Markere alt som korrekt — markér det du er sikker på, lad resten være.</li>
-    <li>Fixe modellen — beskriv bare hvad der var galt, så bruger systemet det til at justere prompten.</li>
+    <li>Review every invoice — even 5-10 thorough reviews give usable data.</li>
+    <li>Mark everything as correct — only mark what you're confident about; leave the rest blank.</li>
+    <li>Fix the model — just describe what was wrong, the system will use it to tune the prompt.</li>
   </ul>
 
-  <h3 style="font-size: 14px; margin-top: 12px;">Pro-tips</h3>
+  <h3 style="font-size: 14px; margin-top: 12px;">Pro tips</h3>
   <ul style="color: var(--text); font-size: 14px;">
-    <li><strong>Missede fejl er guld</strong> — prioritér dem over markeringer på allerede-fundne fejl.</li>
-    <li>Brug <code>wrong_amount</code> når modellen identificerer rigtige linje men sætter forkert beløb (ofte tegn på subtotal eller antal-fejl).</li>
-    <li>Konkrete noter hjælper: "modellen tog ikke højde for kvartals-indeksjustering" er bedre end "forkert".</li>
-    <li>Når du har samlet feedback for flere fakturaer, kør <a href="{{ url_for('feedback.regression_index') }}">regression-test</a> efter hver prompt-ændring for at verificere om den er en forbedring eller forværring.</li>
+    <li><strong>Missed errors are gold</strong> — prioritize them over verdicts on already-found errors.</li>
+    <li>Use <code>wrong_amount</code> when the model identifies the right line but sets a wrong number (often a sign of a subtotal or quantity error).</li>
+    <li>Concrete notes help: "model didn't account for quarterly index adjustment" beats "wrong".</li>
+    <li>Once you've collected feedback on several invoices, run a <a href="{{ url_for('feedback.regression_index') }}">regression test</a> after each prompt change to verify it's a net improvement.</li>
   </ul>
 </div>
 
 <div class="card">
   <h2>Status</h2>
-  <p class="muted">Indtastede mærkninger driver prompt-iteration og regression-tests.</p>
+  <p class="muted">Captured marks drive prompt iteration and regression tests.</p>
   <div class="grid-2" style="margin-top: 12px;">
     <div class="stat">
       <div class="label">Feedback entries</div>
@@ -65,45 +65,45 @@
     <a class="btn" href="{{ url_for('feedback.insights') }}">Insights</a>
     <a class="btn secondary" href="{{ url_for('feedback.autotune_index') }}">Auto-tune</a>
     <a class="btn secondary" href="{{ url_for('feedback.regression_index') }}">Regression</a>
-    <a class="btn secondary" href="{{ url_for('feedback.prompt_history_page') }}">Versioner</a>
-    <a class="btn secondary" href="{{ url_for('feedback.export_xlsx') }}">Eksport</a>
+    <a class="btn secondary" href="{{ url_for('feedback.prompt_history_page') }}">Versions</a>
+    <a class="btn secondary" href="{{ url_for('feedback.export_xlsx') }}">Export</a>
   </p>
 </div>
 
 <div class="card">
-  <h2>Tilføj feedback fra et tidligere run</h2>
-  <p>Vælg et eval-Excel, så viser vi alle (faktura, model)-par hvor du kan markere fejlene som korrekte/forkerte/manglede.</p>
+  <h2>Add feedback from a past run</h2>
+  <p>Pick an eval Excel and we'll show every (invoice, model) cell where you can mark errors as correct/wrong/missed.</p>
   {% if runs %}
     <table>
-      <thead><tr><th>Run</th><th>Modificeret</th><th>Størrelse</th><th></th></tr></thead>
+      <thead><tr><th>Run</th><th>Modified</th><th>Size</th><th></th></tr></thead>
       <tbody>
         {% for r in runs %}
         <tr>
           <td>{{ r.filename }}</td>
           <td class="muted">{{ r.mtime | int }}</td>
           <td class="muted">{{ r.size_kb }} KB</td>
-          <td><a class="btn" href="{{ url_for('feedback.pick_pair', filename=r.filename) }}">Åbn</a></td>
+          <td><a class="btn" href="{{ url_for('feedback.pick_pair', filename=r.filename) }}">Open</a></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   {% else %}
-    <p class="muted">Ingen runs endnu. Kør en evaluering først, så kan du tilføje feedback bagefter.</p>
+    <p class="muted">No runs yet. Run an evaluation first, then add feedback afterwards.</p>
   {% endif %}
 </div>
 
 <div class="card">
-  <h2>Seneste feedback</h2>
+  <h2>Latest feedback</h2>
   {% if recent_feedback %}
     <table>
       <thead><tr>
-        <th>Tidspunkt</th>
-        <th>Faktura</th>
+        <th>Time</th>
+        <th>Invoice</th>
         <th>Model</th>
-        <th>Leverandør</th>
-        <th>Aftale</th>
+        <th>Supplier</th>
+        <th>Agreement</th>
         <th>Verdict</th>
-        <th>Linjer</th>
+        <th>Lines</th>
         <th>Missed</th>
         <th></th>
       </tr></thead>
@@ -124,7 +124,7 @@
           <td>{{ e.missed_discrepancies | length }}</td>
           <td>
             {% if e.run_filename %}
-              <a href="{{ url_for('feedback.review', filename=e.run_filename, invoice_id=e.invoice_id, config_name=e.config_name) }}">Rediger</a>
+              <a href="{{ url_for('feedback.review', filename=e.run_filename, invoice_id=e.invoice_id, config_name=e.config_name) }}">Edit</a>
             {% endif %}
           </td>
         </tr>
@@ -132,7 +132,7 @@
       </tbody>
     </table>
   {% else %}
-    <p class="muted">Endnu ingen feedback registreret.</p>
+    <p class="muted">No feedback recorded yet.</p>
   {% endif %}
 </div>
 

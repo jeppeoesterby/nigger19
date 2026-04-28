@@ -4,7 +4,7 @@
 
 <div class="card">
   <h2>Aggregated insights</h2>
-  <p class="muted">Beregnet ud fra {{ total }} feedback-entries. Brug det her til at se hvilke modeller / leverandører / aftale-typer der er hårdest, og hvor prompten skal skærpes.</p>
+  <p class="muted">Computed from {{ total }} feedback entries. Use this to see which models / suppliers / agreement types are hardest, and where the prompt needs sharpening.</p>
 </div>
 
 <div class="card">
@@ -40,18 +40,18 @@
     </table>
     <p class="muted" style="font-size: 12px; margin-top: 6px;">
       Precision = correct / (correct + FP + wrong_amount).
-      Recall (est.) = (correct + 0,5 × wrong_amount) / (correct + 0,5 × wrong_amount + missed).
+      Recall (est.) = (correct + 0.5 × wrong_amount) / (correct + 0.5 × wrong_amount + missed).
     </p>
   {% else %}
-    <p class="muted">Ingen feedback endnu.</p>
+    <p class="muted">No feedback yet.</p>
   {% endif %}
 </div>
 
 <div class="card">
-  <h2>Per leverandør</h2>
+  <h2>Per supplier</h2>
   {% if per_supplier %}
     <table>
-      <thead><tr><th>Leverandør</th><th>Reviews</th><th>Correct</th><th>FP</th><th>Missed</th><th>Precision</th><th>Recall (est.)</th></tr></thead>
+      <thead><tr><th>Supplier</th><th>Reviews</th><th>Correct</th><th>FP</th><th>Missed</th><th>Precision</th><th>Recall (est.)</th></tr></thead>
       <tbody>
         {% for g in per_supplier %}
         <tr>
@@ -72,7 +72,7 @@
 </div>
 
 <div class="card">
-  <h2>Per aftale-type</h2>
+  <h2>Per agreement type</h2>
   {% if per_agreement_type %}
     <table>
       <thead><tr><th>Type</th><th>Reviews</th><th>Correct</th><th>FP</th><th>Missed</th><th>Precision</th><th>Recall (est.)</th></tr></thead>
@@ -96,12 +96,12 @@
 </div>
 
 <div class="card">
-  <h2>Mønstre i missede fejl</h2>
-  <p class="muted">Heuristikker over de fejl modellerne missede. Bruges som direkte signal til prompt-tweaks.</p>
+  <h2>Patterns in missed errors</h2>
+  <p class="muted">Heuristics over the errors models missed. Use these as direct signals for prompt tweaks.</p>
   {% if miss_patterns %}
     {% for p in miss_patterns %}
       <div style="background: var(--panel-2); border-radius: 6px; padding: 12px; margin-bottom: 10px;">
-        <strong>{{ p.name }}</strong> · <span class="err">{{ p.count }}</span> tilfælde
+        <strong>{{ p.name }}</strong> · <span class="err">{{ p.count }}</span> cases
         {% if p.examples %}
           <ul style="margin: 6px 0 0 16px; font-size: 12px; color: var(--muted);">
             {% for ex in p.examples %}<li>{{ ex }}</li>{% endfor %}
@@ -110,10 +110,10 @@
       </div>
     {% endfor %}
   {% else %}
-    <p class="muted">Ingen mønstre fundet endnu — flere feedback-entries giver bedre signal.</p>
+    <p class="muted">No patterns found yet — more feedback entries give a stronger signal.</p>
   {% endif %}
 </div>
 
-<p><a href="{{ url_for('feedback.index') }}">← Tilbage til dashboard</a></p>
+<p><a href="{{ url_for('feedback.index') }}">← Back to dashboard</a></p>
 
 {% endblock %}

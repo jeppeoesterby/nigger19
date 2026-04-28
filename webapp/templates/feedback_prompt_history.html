@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Prompt-versioner — DiFacto{% endblock %}
+{% block title %}Prompt versions — DiFacto{% endblock %}
 {% block content %}
 
 <div class="card">
-  <h2>Prompt-versioner</h2>
-  <p>Hver godkendt autotune-ændring (eller manuel rediger) gemmes som ny version. Klik <em>Rul tilbage</em> for at gå tilbage til en tidligere version.</p>
+  <h2>Prompt versions</h2>
+  <p>Every approved auto-tune change (or manual edit) is saved as a new version. Click <em>Roll back</em> to revert to a prior version.</p>
 </div>
 
 {% if versions %}
@@ -12,10 +12,10 @@
   <table>
     <thead><tr>
       <th>Version</th>
-      <th>Tid</th>
-      <th>Kilde</th>
+      <th>Time</th>
+      <th>Source</th>
       <th>Note</th>
-      <th>Anvendt forslag</th>
+      <th>Applied suggestion</th>
       <th></th>
       <th></th>
     </tr></thead>
@@ -31,11 +31,11 @@
             <code>{{ sid }}</code>
           {% endfor %}
         </td>
-        <td><a href="{{ url_for('feedback.prompt_history_view', version_id=v.version_id) }}">Se</a></td>
+        <td><a href="{{ url_for('feedback.prompt_history_view', version_id=v.version_id) }}">View</a></td>
         <td>
           {% if not loop.first %}
-            <form method="post" action="{{ url_for('feedback.prompt_history_rollback', version_id=v.version_id) }}" onsubmit="return confirm('Rul tilbage til version {{ v.version_id }}? Den nuværende prompt erstattes.');">
-              <button class="danger-btn" type="submit">Rul tilbage</button>
+            <form method="post" action="{{ url_for('feedback.prompt_history_rollback', version_id=v.version_id) }}" onsubmit="return confirm('Roll back to version {{ v.version_id }}? The current prompt will be replaced.');">
+              <button class="danger-btn" type="submit">Roll back</button>
             </form>
           {% endif %}
         </td>
@@ -46,10 +46,10 @@
 </div>
 {% else %}
 <div class="card">
-  <p class="muted">Ingen versioner gemt endnu. Versioner oprettes første gang en autotune-ændring godkendes eller en rollback udføres.</p>
+  <p class="muted">No versions saved yet. Versions are created the first time an auto-tune change is approved or a rollback is performed.</p>
 </div>
 {% endif %}
 
-<p><a href="{{ url_for('feedback.autotune_index') }}">← Tilbage til autotune</a></p>
+<p><a href="{{ url_for('feedback.autotune_index') }}">← Back to auto-tune</a></p>
 
 {% endblock %}

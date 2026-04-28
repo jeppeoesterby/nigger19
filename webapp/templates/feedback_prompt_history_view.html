@@ -3,11 +3,11 @@
 {% block content %}
 
 <div class="card">
-  <h2>Prompt-version <code>{{ version.version_id }}</code></h2>
-  <p class="muted">{{ version.timestamp }} · kilde: {{ version.source }}</p>
+  <h2>Prompt version <code>{{ version.version_id }}</code></h2>
+  <p class="muted">{{ version.timestamp }} · source: {{ version.source }}</p>
   {% if version.note %}<p>{{ version.note }}</p>{% endif %}
   {% if version.autotune_run_id %}
-    <p><a href="{{ url_for('feedback.autotune_result', run_id=version.autotune_run_id) }}">Se autotune-kørsel der genererede den →</a></p>
+    <p><a href="{{ url_for('feedback.autotune_result', run_id=version.autotune_run_id) }}">See the auto-tune run that generated it →</a></p>
   {% endif %}
 </div>
 
@@ -31,6 +31,6 @@
   <pre style="font-size: 12px; white-space: pre-wrap;">{{ version.reasoning_instructions }}</pre>
 </div>
 
-<p><a href="{{ url_for('feedback.prompt_history_page') }}">← Tilbage til historik</a></p>
+<p><a href="{{ url_for('feedback.prompt_history_page') }}">← Back to history</a></p>
 
 {% endblock %}

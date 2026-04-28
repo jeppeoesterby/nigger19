@@ -73,11 +73,11 @@ def write_report(
 ) -> None:
     wb = Workbook()
 
-    # Sheet 1: Fejloversigt — flat audit table matching the manual report format
-    # (one row per discrepant line item). config_name is the first column so
-    # users can compare models via Excel auto-filter or sort.
+    # Sheet 1: Audit Findings — flat audit table matching the manual report
+    # format (one row per discrepant line item). config_name is the first
+    # column so users can compare models via Excel auto-filter or sort.
     ws = wb.active
-    ws.title = "Fejloversigt"
+    ws.title = "Audit Findings"
     _write_fejloversigt(ws, per_invoice_rows)
 
     # Sheet 2: Benchmark — pivot view (one row per unique error, one column per
@@ -86,22 +86,22 @@ def write_report(
     ws = wb.create_sheet("Benchmark")
     _write_benchmark(ws, per_invoice_rows)
 
-    # Sheet 3: Diagnostik — per-pair "WHY" view. One row per (invoice, config)
+    # Sheet 3: Diagnostics — per-pair "WHY" view. One row per (invoice, config)
     # showing extraction status, line counts, error notes, raw-response excerpt
     # so a user reviewing missed errors can see WHY (e.g. extraction failed,
     # no agreement match found, JSON parse failed, empty response).
-    ws = wb.create_sheet("Diagnostik")
+    ws = wb.create_sheet("Diagnostics")
     _write_diagnostics(ws, per_invoice_rows)
 
-    # Sheet 4: Alle linjer — every extracted line across all pairs, with match
+    # Sheet 4: All Lines — every extracted line across all pairs, with match
     # status. Lets the user filter "show me all lines for INV-001 across all
     # models" or "show me lines without agreement match" to debug deeper.
-    ws = wb.create_sheet("Alle linjer")
+    ws = wb.create_sheet("All Lines")
     _write_all_lines(ws, per_invoice_rows)
 
-    # Sheet 5: Findings (human-readable per-invoice analysis)
+    # Sheet 5: Findings (per-invoice human-readable extraction overview)
     # Keeps the per-invoice context (totals, rebate, credit-note status) that
-    # the flat Fejloversigt deliberately omits.
+    # the flat Audit Findings sheet deliberately omits.
     ws = wb.create_sheet("Findings")
     headers = [
         "invoice_id",
@@ -126,7 +126,7 @@ def write_report(
         line_items = pred.get("line_items") or []
         discrepancies = [li for li in line_items if li.get("has_discrepancy")]
         discrepancy_text = _format_discrepancies(discrepancies) if discrepancies else (
-            "(ingen uoverensstemmelser fundet)" if line_items else "(ingen line items)"
+            "(no discrepancies found)" if line_items else "(no line items)"
         )
         ws.append(
             [
@@ -143,7 +143,7 @@ def write_report(
                 discrepancy_text,
                 _format_rebate(pred),
                 _format_credit_note(pred),
-                "OK" if not notes else f"FEJL: {notes}",
+                "OK" if not notes else f"ERROR: {notes}",
             ]
         )
     # Wide cols for the multi-line text columns + wrap-text
@@ -408,9 +408,9 @@ GRAND_TOTAL_FONT = Font(bold=True, color="FFFFFF", size=12)
 def _write_fejloversigt(ws, per_invoice_rows: list[dict]) -> None:
     """Audit-style sheet: one row per discrepant line item, grouped by config.
 
-    Layout matches the manual "Fejloversigt" report — Faktura Nummer,
-    Varenummer, Faktisk købspris, Rabatpris, Antal, Faktisk total pris,
-    Total rabatpris, Sum overbetalt — with config_name as the leading column
+    Layout matches the manual "Audit Findings" report — Invoice Number,
+    Item Number, Actual Price, Agreed Price, Quantity, Actual Total,
+    Agreed Total, Overpayment — with config_name as the leading column
     so the user can compare models side-by-side via Excel's auto-filter.
 
     A subtotal row sits at the end of each model block and a grand-total
@@ -446,27 +446,27 @@ def _write_fejloversigt(ws, per_invoice_rows: list[dict]) -> None:
                 sum_over = round(faktisk_total - agreed_total, 2)
             by_config[cfg].append(
                 {
-                    "faktura_nummer": str(invoice_no),
-                    "varenummer": (li.get("item_number") or "").strip() if li.get("item_number") else "",
-                    "beskrivelse": (li.get("description") or "").strip(),
-                    "faktisk_købspris": unit,
-                    "rabatpris": agreed,
-                    "antal": qty,
-                    "faktisk_total": faktisk_total,
-                    "total_rabatpris": agreed_total,
-                    "sum_overbetalt": sum_over,
+                    "invoice_number": str(invoice_no),
+                    "item_number": (li.get("item_number") or "").strip() if li.get("item_number") else "",
+                    "description": (li.get("description") or "").strip(),
+                    "actual_unit_price": unit,
+                    "agreed_unit_price": agreed,
+                    "quantity": qty,
+                    "actual_total": faktisk_total,
+                    "agreed_total": agreed_total,
+                    "overpayment": sum_over,
                 }
             )
 
-    # --- Top: Model-sammenligning block ---
-    title = ws.cell(row=1, column=1, value="Fejloversigt — model-sammenligning")
+    # --- Top: Model comparison block ---
+    title = ws.cell(row=1, column=1, value="Audit Findings — Model Comparison")
     title.font = Font(bold=True, size=14)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=10)
 
     cmp_headers = [
         "Model",
-        "# uoverensstemmelser",
-        "Total sum overbetalt (DKK)",
+        "# Discrepancies",
+        "Total Overpayment (DKK)",
     ]
     for col, h in enumerate(cmp_headers, start=1):
         c = ws.cell(row=3, column=col, value=h)
@@ -475,7 +475,7 @@ def _write_fejloversigt(ws, per_invoice_rows: list[dict]) -> None:
     row = 4
     for cfg in config_order:
         items = by_config[cfg]
-        total_over = sum((x["sum_overbetalt"] or 0) for x in items)
+        total_over = sum((x["overpayment"] or 0) for x in items)
         ws.cell(row=row, column=1, value=cfg)
         ws.cell(row=row, column=2, value=len(items))
         ws.cell(row=row, column=3, value=round(total_over, 2))
@@ -483,7 +483,7 @@ def _write_fejloversigt(ws, per_invoice_rows: list[dict]) -> None:
 
     # --- Detail block ---
     detail_start_row = row + 2
-    title2 = ws.cell(row=detail_start_row, column=1, value="Detaljer pr. uoverensstemmelse")
+    title2 = ws.cell(row=detail_start_row, column=1, value="Detail — One Row per Discrepancy")
     title2.font = Font(bold=True, size=12)
     ws.merge_cells(
         start_row=detail_start_row,
@@ -494,15 +494,15 @@ def _write_fejloversigt(ws, per_invoice_rows: list[dict]) -> None:
 
     headers = [
         "Model",
-        "Faktura Nummer",
-        "Varenummer",
-        "Beskrivelse",
-        "Faktisk købspris",
-        "Rabatpris",
-        "Antal",
-        "Faktisk total pris",
-        "Total rabatpris",
-        "Sum overbetalt",
+        "Invoice Number",
+        "Item Number",
+        "Description",
+        "Actual Price",
+        "Agreed Price",
+        "Quantity",
+        "Actual Total",
+        "Agreed Total",
+        "Overpayment",
     ]
     header_row_idx = detail_start_row + 2
     for col, h in enumerate(headers, start=1):
@@ -519,29 +519,29 @@ def _write_fejloversigt(ws, per_invoice_rows: list[dict]) -> None:
             ws.cell(row=row, column=1, value=cfg)
             ws.cell(
                 row=row, column=2,
-                value="(ingen uoverensstemmelser fundet for denne model)",
+                value="(no discrepancies found for this model)",
             )
             row += 1
             continue
         for it in items:
             ws.cell(row=row, column=1, value=cfg)
-            ws.cell(row=row, column=2, value=it["faktura_nummer"])
-            ws.cell(row=row, column=3, value=it["varenummer"])
-            ws.cell(row=row, column=4, value=it["beskrivelse"][:120])
-            ws.cell(row=row, column=5, value=it["faktisk_købspris"])
-            ws.cell(row=row, column=6, value=it["rabatpris"])
-            ws.cell(row=row, column=7, value=it["antal"])
-            ws.cell(row=row, column=8, value=it["faktisk_total"])
-            ws.cell(row=row, column=9, value=it["total_rabatpris"])
-            ws.cell(row=row, column=10, value=it["sum_overbetalt"])
+            ws.cell(row=row, column=2, value=it["invoice_number"])
+            ws.cell(row=row, column=3, value=it["item_number"])
+            ws.cell(row=row, column=4, value=it["description"][:120])
+            ws.cell(row=row, column=5, value=it["actual_unit_price"])
+            ws.cell(row=row, column=6, value=it["agreed_unit_price"])
+            ws.cell(row=row, column=7, value=it["quantity"])
+            ws.cell(row=row, column=8, value=it["actual_total"])
+            ws.cell(row=row, column=9, value=it["agreed_total"])
+            ws.cell(row=row, column=10, value=it["overpayment"])
             for col in (5, 6, 8, 9, 10):
                 ws.cell(row=row, column=col).number_format = '#,##0.00 "kr."'
             row += 1
         # Subtotal row for this config
-        subtotal = round(sum((x["sum_overbetalt"] or 0) for x in items), 2)
+        subtotal = round(sum((x["overpayment"] or 0) for x in items), 2)
         grand_total += subtotal
         sub_label = ws.cell(
-            row=row, column=1, value=f"Samlet for {cfg} (manglende rabat):"
+            row=row, column=1, value=f"Total for {cfg} (missing discount):"
         )
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=9)
         sub_label.fill = SUBTOTAL_FILL
@@ -811,10 +811,10 @@ def _write_benchmark(ws, per_invoice_rows: list[dict]) -> None:
             entry = by_key.setdefault(
                 key,
                 {
-                    "faktura": invoice_no,
-                    "varenummer": varenr,
-                    "beskrivelse": desc,
-                    "antal": qty,
+                    "invoice_number": invoice_no,
+                    "item_number": varenr,
+                    "description": desc,
+                    "quantity": qty,
                     "unit_price": unit,
                     "agreed_unit_price": agreed,
                     "by_model": {},
@@ -823,8 +823,8 @@ def _write_benchmark(ws, per_invoice_rows: list[dict]) -> None:
             # First non-null value wins for the consensus columns. Different
             # models reporting different prices on the same key is rare but
             # possible; the by_model column shows what each one said.
-            if entry["antal"] is None and qty is not None:
-                entry["antal"] = qty
+            if entry["quantity"] is None and qty is not None:
+                entry["quantity"] = qty
             if entry["unit_price"] is None and unit is not None:
                 entry["unit_price"] = unit
             if entry["agreed_unit_price"] is None and agreed is not None:
@@ -836,15 +836,15 @@ def _write_benchmark(ws, per_invoice_rows: list[dict]) -> None:
     total_unique_errors = len(by_key)
 
     # --- Top: per-model summary ---
-    title = ws.cell(row=1, column=1, value="Benchmark — pr. unik fejl, pr. model")
+    title = ws.cell(row=1, column=1, value="Benchmark — One Row per Unique Error, One Column per Model")
     title.font = Font(bold=True, size=14)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max(8, 4 + n_models))
 
     summary_headers = [
         "Model",
-        "Fejl fundet",
+        "Errors Found",
         "Coverage",
-        "Total sum overbetalt (DKK)",
+        "Total Overpayment (DKK)",
     ]
     for col, h in enumerate(summary_headers, start=1):
         c = ws.cell(row=3, column=col, value=h)
@@ -865,7 +865,7 @@ def _write_benchmark(ws, per_invoice_rows: list[dict]) -> None:
     # --- Detail pivot ---
     detail_start = row + 2
     title2 = ws.cell(
-        row=detail_start, column=1, value="Pivot — én række pr. unik fejl"
+        row=detail_start, column=1, value="Pivot — one row per unique error"
     )
     title2.font = Font(bold=True, size=12)
     ws.merge_cells(
@@ -876,12 +876,12 @@ def _write_benchmark(ws, per_invoice_rows: list[dict]) -> None:
     )
 
     fixed_headers = [
-        "Faktura Nummer",
-        "Varenummer",
-        "Beskrivelse",
-        "Antal",
-        "Faktisk købspris",
-        "Rabatpris (aftalt)",
+        "Invoice Number",
+        "Item Number",
+        "Description",
+        "Quantity",
+        "Actual Price",
+        "Agreed Price",
     ]
     headers = fixed_headers + model_order + ["Found by"]
     header_row = detail_start + 2
@@ -901,10 +901,10 @@ def _write_benchmark(ws, per_invoice_rows: list[dict]) -> None:
     row = header_row + 1
     n_fixed = len(fixed_headers)
     for e in sorted_entries:
-        ws.cell(row=row, column=1, value=e["faktura"])
-        ws.cell(row=row, column=2, value=e["varenummer"])
-        ws.cell(row=row, column=3, value=(e["beskrivelse"] or "")[:120])
-        ws.cell(row=row, column=4, value=e["antal"])
+        ws.cell(row=row, column=1, value=e["invoice_number"])
+        ws.cell(row=row, column=2, value=e["item_number"])
+        ws.cell(row=row, column=3, value=(e["description"] or "")[:120])
+        ws.cell(row=row, column=4, value=e["quantity"])
         c_unit = ws.cell(row=row, column=5, value=e["unit_price"])
         c_agreed = ws.cell(row=row, column=6, value=e["agreed_unit_price"])
         c_unit.number_format = '#,##0.00 "kr."'
@@ -962,19 +962,19 @@ def _format_discrepancies(items: list[dict]) -> str:
     """One human-readable line per discrepant line item."""
     lines = []
     for i, li in enumerate(items, start=1):
-        desc = (li.get("description") or "(ukendt)").strip()
+        desc = (li.get("description") or "(unknown)").strip()
         qty = li.get("quantity")
         unit = li.get("unit_price")
         agreed = li.get("agreed_unit_price")
         diff_amt = li.get("discrepancy_amount")
         sign = ""
         if isinstance(diff_amt, (int, float)):
-            sign = "supplier overopkrævet" if diff_amt > 0 else "supplier underopkrævet" if diff_amt < 0 else "ingen difference"
+            sign = "supplier overcharged" if diff_amt > 0 else "supplier undercharged" if diff_amt < 0 else "no difference"
         qty_str = _fmt_num(qty) if qty is not None else "?"
         lines.append(
             f"{i}. {desc[:80]}\n"
-            f"   Aftalt: {_fmt_num(agreed)}/stk · Faktureret: {_fmt_num(unit)}/stk · "
-            f"Mængde: {qty_str}\n"
+            f"   Agreed: {_fmt_num(agreed)}/unit · Charged: {_fmt_num(unit)}/unit · "
+            f"Qty: {qty_str}\n"
             f"   Difference: {_fmt_num(diff_amt)} DKK ({sign})"
         )
     return "\n\n".join(lines)
@@ -984,24 +984,24 @@ def _format_rebate(pred: dict) -> str:
     applied = pred.get("rebate_applied")
     expected = pred.get("expected_rebate")
     if applied is None and expected is None:
-        return "(intet rabat-felt udfyldt)"
+        return "(no rebate field populated)"
     if expected is None:
-        return f"Faktureret rabat: {_fmt_num(applied)} DKK (ingen forventet rabat beregnet)"
+        return f"Applied rebate: {_fmt_num(applied)} DKK (no expected rebate calculated)"
     if applied is None:
-        return f"Forventet rabat: {_fmt_num(expected)} DKK (intet rabat-felt på faktura)"
+        return f"Expected rebate: {_fmt_num(expected)} DKK (no rebate field on invoice)"
     try:
         diff = float(expected) - float(applied)
     except (TypeError, ValueError):
         diff = None
     base = (
-        f"Forventet: {_fmt_num(expected)} DKK\n"
-        f"Faktureret: {_fmt_num(applied)} DKK"
+        f"Expected: {_fmt_num(expected)} DKK\n"
+        f"Applied: {_fmt_num(applied)} DKK"
     )
     if diff is not None:
         if abs(diff) < 1.0:
-            base += f"\nDifference: {_fmt_num(diff)} DKK (OK, indenfor tolerance)"
+            base += f"\nDifference: {_fmt_num(diff)} DKK (OK, within tolerance)"
         else:
-            base += f"\nDifference: {_fmt_num(diff)} DKK ⚠ rabat-afvigelse"
+            base += f"\nDifference: {_fmt_num(diff)} DKK ⚠ rebate mismatch"
     return base
 
 
@@ -1010,13 +1010,13 @@ def _format_credit_note(pred: dict) -> str:
     doctype = pred.get("document_type")
     if doctype == "credit_note":
         if not isinstance(cnh, dict):
-            return "Kreditnota — men credit_note_handling mangler ⚠"
-        ref = cnh.get("references_invoice") or "(ingen reference fundet)"
-        sign = cnh.get("sign_convention") or "(ukendt)"
-        return f"Kreditnota\nFortegn: {sign}\nRef. faktura: {ref}"
+            return "Credit note — but credit_note_handling missing ⚠"
+        ref = cnh.get("references_invoice") or "(no reference found)"
+        sign = cnh.get("sign_convention") or "(unknown)"
+        return f"Credit note\nSign convention: {sign}\nRef. invoice: {ref}"
     if isinstance(cnh, dict) and cnh.get("is_credit_note"):
-        return "Inkonsistens: document_type=invoice men credit_note_handling.is_credit_note=true ⚠"
-    return "(ikke en kreditnota)"
+        return "Inconsistency: document_type=invoice but credit_note_handling.is_credit_note=true ⚠"
+    return "(not a credit note)"
 
 
 def json_diff(gt: dict, pred: dict) -> str:

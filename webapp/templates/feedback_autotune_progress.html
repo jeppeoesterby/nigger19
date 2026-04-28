@@ -1,22 +1,22 @@
 {% extends "base.html" %}
-{% block title %}Autotune-analyse i gang...{% endblock %}
+{% block title %}Auto-tune analysis in progress...{% endblock %}
 {% block content %}
 
 <div class="card">
-  <h2>Autotune-analyse i gang</h2>
+  <h2>Auto-tune analysis in progress</h2>
   <p>Status:
     {% if state.status == 'done' %}<span class="badge done">done</span>
     {% elif state.status == 'error' %}<span class="badge error">error</span>
     {% else %}<span class="badge running">{{ state.status }}</span>{% endif %}
   </p>
-  <p class="muted">Startet {{ state.started_at }}</p>
-  {% if state.error %}<p class="err">Fejl: {{ state.error }}</p>{% endif %}
+  <p class="muted">Started {{ state.started_at }}</p>
+  {% if state.error %}<p class="err">Error: {{ state.error }}</p>{% endif %}
   {% if state.status == 'done' and state.result_run_id %}
-    <p><a class="btn" href="{{ url_for('feedback.autotune_result', run_id=state.result_run_id) }}">Se resultat</a></p>
+    <p><a class="btn" href="{{ url_for('feedback.autotune_result', run_id=state.result_run_id) }}">View result</a></p>
   {% elif state.status == 'error' %}
-    <p><a class="btn secondary" href="{{ url_for('feedback.autotune_index') }}">← Tilbage</a></p>
+    <p><a class="btn secondary" href="{{ url_for('feedback.autotune_index') }}">← Back</a></p>
   {% else %}
-    <p class="muted">Vent et øjeblik. Siden refresher automatisk.</p>
+    <p class="muted">Hang on. The page refreshes automatically.</p>
   {% endif %}
 </div>
 

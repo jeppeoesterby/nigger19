@@ -4,29 +4,29 @@
 
 <div class="card">
   <h2>Regression test</h2>
-  <p>Kører de fakturaer der har feedback igennem prompten igen og sammenligner med dine mærkninger. Bruges til at verificere om en prompt-ændring forbedrer eller forværrer fejl-detektionen.</p>
+  <p>Re-runs the invoices that have feedback through the prompt and compares the results to your marks. Use this to verify whether a prompt change actually improves error detection.</p>
   <div class="grid-2">
     <div class="stat"><div class="label">Feedback entries</div><div class="value">{{ feedback_count }}</div></div>
-    <div class="stat"><div class="label">Unikke fakturaer</div><div class="value">{{ invoice_ids | length }}</div></div>
-    <div class="stat"><div class="label">På disk lige nu</div><div class="value ok">{{ available_count }}</div></div>
-    <div class="stat"><div class="label">Modeller i feedback</div><div class="value">{{ config_names | length }}</div></div>
+    <div class="stat"><div class="label">Unique invoices</div><div class="value">{{ invoice_ids | length }}</div></div>
+    <div class="stat"><div class="label">On disk now</div><div class="value ok">{{ available_count }}</div></div>
+    <div class="stat"><div class="label">Models in feedback</div><div class="value">{{ config_names | length }}</div></div>
   </div>
   {% if missing_invoices %}
     <p class="warn" style="margin-top: 10px;">
-      ⚠ {{ missing_invoices | length }} faktura(er) i feedback findes ikke i invoices/-mappen lige nu — disse springes over. Genupload for at inkludere dem.
+      ⚠ {{ missing_invoices | length }} invoice(s) in feedback are not in the invoices/ folder right now — they'll be skipped. Re-upload them to include them.
     </p>
   {% endif %}
 </div>
 
 <div class="card">
-  <h2>Start regression-kørsel</h2>
+  <h2>Start regression run</h2>
   {% if feedback_count == 0 %}
-    <p class="muted">Du har ingen feedback endnu. Tilføj feedback for nogle (faktura, model)-par først.</p>
+    <p class="muted">No feedback yet. Add feedback for some (invoice, model) cells first.</p>
   {% elif available_count == 0 %}
-    <p class="muted">Ingen af fakturaerne i feedback er på disk lige nu. Genupload dem først.</p>
+    <p class="muted">None of the invoices in feedback are on disk right now. Re-upload them first.</p>
   {% else %}
     <form method="post" action="{{ url_for('feedback.regression_start') }}">
-      <p>Vælg modeller at re-køre. Hver model du krydser af koster ca. det samme som den oprindelige run for de samme fakturaer.</p>
+      <p>Pick models to re-run. Each model you check costs roughly the same as the original run for those invoices.</p>
       <div class="config-grid">
         {% for cfg in config_names %}
           <label class="config-check">
@@ -36,18 +36,18 @@
         {% endfor %}
       </div>
       <p class="warn" style="margin-top: 10px; font-size: 12px;">
-        Bemærk: dette kalder API'erne med dine nøgler — koster kreditter. Du har {{ available_count }} faktura(er) × valgte modeller.
+        Note: this calls the APIs with your keys — costs credits. {{ available_count }} invoice(s) × selected models.
       </p>
-      <button type="submit" style="margin-top: 8px;">Kør regression-test</button>
+      <button type="submit" style="margin-top: 8px;">Run regression test</button>
     </form>
   {% endif %}
 </div>
 
 <div class="card">
-  <h2>Tidligere regression-kørsler</h2>
+  <h2>Past regression runs</h2>
   {% if runs %}
     <table>
-      <thead><tr><th>Tidspunkt</th><th>Status</th><th>Modeller</th><th>Fremskridt</th><th></th></tr></thead>
+      <thead><tr><th>Time</th><th>Status</th><th>Models</th><th>Progress</th><th></th></tr></thead>
       <tbody>
         {% for r in runs %}
         <tr>
@@ -59,16 +59,16 @@
           </td>
           <td>{{ r.config_names | join(', ') }}</td>
           <td>{{ r.completed_pairs }} / {{ r.total_pairs }}</td>
-          <td><a href="{{ url_for('feedback.regression_view', run_id=r.id) }}">Se</a></td>
+          <td><a href="{{ url_for('feedback.regression_view', run_id=r.id) }}">View</a></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   {% else %}
-    <p class="muted">Ingen regression-kørsler endnu.</p>
+    <p class="muted">No regression runs yet.</p>
   {% endif %}
 </div>
 
-<p><a href="{{ url_for('feedback.index') }}">← Tilbage til dashboard</a></p>
+<p><a href="{{ url_for('feedback.index') }}">← Back to dashboard</a></p>
 
 {% endblock %}

@@ -1,22 +1,22 @@
 {% extends "base.html" %}
-{% block title %}Vælg par til feedback — {{ filename }}{% endblock %}
+{% block title %}Pick pair to review — {{ filename }}{% endblock %}
 {% block content %}
 
 <div class="card">
-  <h2>Vælg (faktura, model) til feedback</h2>
+  <h2>Pick (invoice, model) to review</h2>
   <p class="muted">Run: <code>{{ filename }}</code></p>
-  <p>Klik en række for at tilføje eller redigere feedback for det par. Markerede par har allerede feedback.</p>
+  <p>Click a row to add or edit feedback for that pair. Marked rows already have feedback.</p>
 </div>
 
 <div class="card">
   <table>
     <thead>
       <tr>
-        <th>Faktura</th>
+        <th>Invoice</th>
         <th>Model</th>
-        <th>Leverandør</th>
-        <th>Faktura-nr.</th>
-        <th>#Fejl</th>
+        <th>Supplier</th>
+        <th>Invoice no.</th>
+        <th>#Errors</th>
         <th>Status</th>
         <th></th>
       </tr>
@@ -38,7 +38,7 @@
         </td>
         <td>
           <a class="btn" href="{{ url_for('feedback.review', filename=filename, invoice_id=p.invoice_id, config_name=p.config_name) }}">
-            {% if p.has_feedback %}Rediger{% else %}Tilføj{% endif %}
+            {% if p.has_feedback %}Edit{% else %}Add{% endif %}
           </a>
         </td>
       </tr>
@@ -47,6 +47,6 @@
   </table>
 </div>
 
-<p><a href="{{ url_for('feedback.index') }}">← Tilbage til feedback dashboard</a></p>
+<p><a href="{{ url_for('feedback.index') }}">← Back to feedback dashboard</a></p>
 
 {% endblock %}

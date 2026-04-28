@@ -4,49 +4,49 @@
 
 <div class="card">
   <h2>Auto-tune assistant</h2>
-  <p>Lader Claude Sonnet analysere alle feedback-entries og foreslå konkrete prompt-ændringer. <strong>Ingen ændring anvendes automatisk</strong> — du ser et diff og godkender hver enkelt ændring.</p>
+  <p>Asks Claude Sonnet to analyze all feedback entries and propose concrete prompt edits. <strong>Nothing is auto-applied</strong> — you see a diff and approve each change individually.</p>
 
-  <h3 style="font-size: 14px; margin-top: 12px;">Indbyggede sikkerhedsforanstaltninger</h3>
+  <h3 style="font-size: 14px; margin-top: 12px;">Built-in safeguards</h3>
   <ul style="font-size: 14px;">
-    <li><strong>Min. 3 beviser</strong>: hvert forslag skal pege på mindst 3 specifikke feedback-entries. Mønstre med færre cases afvises og vises i "overvejet men afvist".</li>
-    <li><strong>Verbatim diff</strong>: hver ændring er en præcis find/replace. Hvis modellen prøver at lave vagt "skarp prompten", afvises forslaget.</li>
-    <li><strong>Confidence-score</strong>: Højt (5+ cases), Medium (3-4), Lavt (3 grænse-cases).</li>
-    <li><strong>Versioneret</strong>: hver godkendt ændring gemmes som ny version. Rul tilbage i ét klik.</li>
-    <li><strong>Hallucination-check</strong>: hvis modellen citerer feedback-IDs der ikke eksisterer, afvises forslaget.</li>
+    <li><strong>Min. 3 supporting cases</strong>: every suggestion must cite at least 3 specific feedback entries. Patterns with fewer cases are rejected and shown under "considered but rejected".</li>
+    <li><strong>Verbatim diff</strong>: every change is an exact find/replace. If the model tries to suggest a vague "sharpen the prompt", the suggestion is rejected.</li>
+    <li><strong>Confidence score</strong>: high (5+ cases), medium (3-4), low (3 borderline cases).</li>
+    <li><strong>Versioned</strong>: every accepted change is saved as a new version. Roll back in one click.</li>
+    <li><strong>Hallucination check</strong>: if the model cites feedback IDs that don't exist, the suggestion is rejected.</li>
   </ul>
 </div>
 
 <div class="card">
-  <h2>Kør analyse</h2>
+  <h2>Run analysis</h2>
   <div class="grid-2">
     <div class="stat">
-      <div class="label">Feedback-entries klar</div>
+      <div class="label">Feedback entries ready</div>
       <div class="value">{{ feedback_count }}</div>
     </div>
     <div class="stat">
-      <div class="label">Estimeret omkostning</div>
+      <div class="label">Estimated cost</div>
       <div class="value">${{ '%.3f' | format(est_cost_usd) }}</div>
       <p class="muted" style="font-size: 11px;">~{{ est_input_tokens }} input + 2k output tokens · Claude Sonnet 4.6</p>
     </div>
   </div>
   {% if feedback_count == 0 %}
-    <p class="warn" style="margin-top: 10px;">Ingen feedback at analysere. Tilføj feedback til nogle (faktura, model)-par først.</p>
+    <p class="warn" style="margin-top: 10px;">No feedback to analyze. Add feedback for some (invoice, model) cells first.</p>
   {% else %}
     <form method="post" action="{{ url_for('feedback.autotune_analyze') }}" style="margin-top: 10px;">
-      <button type="submit">Analyser og foreslå forbedringer</button>
+      <button type="submit">Analyze and suggest improvements</button>
     </form>
   {% endif %}
 </div>
 
 <div class="card">
-  <h2>Tidligere autotune-kørsler</h2>
+  <h2>Past auto-tune runs</h2>
   {% if recent_runs %}
     <table>
       <thead><tr>
-        <th>Tid</th>
-        <th>Forslag</th>
-        <th>Afvist</th>
-        <th>Feedback brugt</th>
+        <th>Time</th>
+        <th>Suggestions</th>
+        <th>Rejected</th>
+        <th>Feedback used</th>
         <th>Status</th>
         <th></th>
       </tr></thead>
@@ -61,21 +61,21 @@
             {% if r.error %}<span class="badge error">error</span>
             {% else %}<span class="badge done">done</span>{% endif %}
           </td>
-          <td><a href="{{ url_for('feedback.autotune_result', run_id=r.run_id) }}">Se</a></td>
+          <td><a href="{{ url_for('feedback.autotune_result', run_id=r.run_id) }}">View</a></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   {% else %}
-    <p class="muted">Ingen analyser kørt endnu.</p>
+    <p class="muted">No analyses run yet.</p>
   {% endif %}
 </div>
 
 <div class="card">
-  <h2>Prompt-versioner</h2>
+  <h2>Prompt versions</h2>
   {% if versions %}
     <table>
-      <thead><tr><th>Version</th><th>Tid</th><th>Kilde</th><th>Note</th><th></th></tr></thead>
+      <thead><tr><th>Version</th><th>Time</th><th>Source</th><th>Note</th><th></th></tr></thead>
       <tbody>
         {% for v in versions %}
         <tr>
@@ -83,17 +83,17 @@
           <td class="muted">{{ v.timestamp }}</td>
           <td><span class="badge">{{ v.source }}</span></td>
           <td>{{ v.note or '' }}</td>
-          <td><a href="{{ url_for('feedback.prompt_history_view', version_id=v.version_id) }}">Se</a></td>
+          <td><a href="{{ url_for('feedback.prompt_history_view', version_id=v.version_id) }}">View</a></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
-    <p style="margin-top: 8px;"><a href="{{ url_for('feedback.prompt_history_page') }}">Fuld historik →</a></p>
+    <p style="margin-top: 8px;"><a href="{{ url_for('feedback.prompt_history_page') }}">Full history →</a></p>
   {% else %}
-    <p class="muted">Ingen versioner endnu (versions oprettes første gang en autotune-ændring godkendes).</p>
+    <p class="muted">No versions yet (versions are created the first time an auto-tune change is approved).</p>
   {% endif %}
 </div>
 
-<p><a href="{{ url_for('feedback.index') }}">← Tilbage til feedback dashboard</a></p>
+<p><a href="{{ url_for('feedback.index') }}">← Back to feedback dashboard</a></p>
 
 {% endblock %}
