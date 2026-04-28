@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Autotune-analyse i gang...{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Autotune-analyse i gang</h2>
+  <p>Status:
+    {% if state.status == 'done' %}<span class="badge done">done</span>
+    {% elif state.status == 'error' %}<span class="badge error">error</span>
+    {% else %}<span class="badge running">{{ state.status }}</span>{% endif %}
+  </p>
+  <p class="muted">Startet {{ state.started_at }}</p>
+  {% if state.error %}<p class="err">Fejl: {{ state.error }}</p>{% endif %}
+  {% if state.status == 'done' and state.result_run_id %}
+    <p><a class="btn" href="{{ url_for('feedback.autotune_result', run_id=state.result_run_id) }}">Se resultat</a></p>
+  {% elif state.status == 'error' %}
+    <p><a class="btn secondary" href="{{ url_for('feedback.autotune_index') }}">← Tilbage</a></p>
+  {% else %}
+    <p class="muted">Vent et øjeblik. Siden refresher automatisk.</p>
+  {% endif %}
+</div>
+
+{% if state.status not in ('done', 'error') %}
+<script>setTimeout(() => location.reload(), 4000);</script>
+{% endif %}
+
+{% endblock %}
