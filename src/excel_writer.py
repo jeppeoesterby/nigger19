@@ -73,12 +73,17 @@ def write_report(
 ) -> None:
     wb = Workbook()
 
-    # Sheet 1: Findings (human-readable per-invoice analysis)
-    # This is the FIRST sheet because non-technical users open the workbook here
-    # to see at a glance: what did the model extract, what discrepancies did it
-    # find, and did anything fail.
+    # Sheet 1: Fejloversigt — flat audit table matching the manual report format
+    # (one row per discrepant line item). config_name is the first column so
+    # users can compare models via Excel auto-filter or sort.
     ws = wb.active
-    ws.title = "Findings"
+    ws.title = "Fejloversigt"
+    _write_fejloversigt(ws, per_invoice_rows)
+
+    # Sheet 2: Findings (human-readable per-invoice analysis)
+    # Keeps the per-invoice context (totals, rebate, credit-note status) that
+    # the flat Fejloversigt deliberately omits.
+    ws = wb.create_sheet("Findings")
     headers = [
         "invoice_id",
         "config_name",
@@ -373,6 +378,182 @@ def _clip_for_excel(s: str, max_len: int = 32000) -> str:
 
 def json_pretty(obj: Any) -> str:
     return json.dumps(obj, indent=2, ensure_ascii=False, default=str)
+
+
+SUBTOTAL_FILL = PatternFill(start_color="E5F0EA", end_color="E5F0EA", fill_type="solid")
+SUBTOTAL_FONT = Font(bold=True, color="0E7C2E")
+GRAND_TOTAL_FILL = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+GRAND_TOTAL_FONT = Font(bold=True, color="FFFFFF", size=12)
+
+
+def _write_fejloversigt(ws, per_invoice_rows: list[dict]) -> None:
+    """Audit-style sheet: one row per discrepant line item, grouped by config.
+
+    Layout matches the manual "Fejloversigt" report — Faktura Nummer,
+    Varenummer, Faktisk købspris, Rabatpris, Antal, Faktisk total pris,
+    Total rabatpris, Sum overbetalt — with config_name as the leading column
+    so the user can compare models side-by-side via Excel's auto-filter.
+
+    A subtotal row sits at the end of each model block and a grand-total
+    comparison block at the very top makes "which model caught the most
+    overcharges" obvious.
+    """
+    # Build flat list of discrepant lines, grouped by config preserving the
+    # order configs appear in per_invoice_rows.
+    by_config: dict[str, list[dict]] = {}
+    config_order: list[str] = []
+    for r in per_invoice_rows:
+        cfg = r.get("config_name") or "(unknown)"
+        if cfg not in by_config:
+            by_config[cfg] = []
+            config_order.append(cfg)
+        pred = r.get("pred") or {}
+        invoice_no = pred.get("invoice_number") or r.get("invoice_id") or ""
+        for li in pred.get("line_items") or []:
+            if not li.get("has_discrepancy"):
+                continue
+            qty = _coerce_float(li.get("quantity"))
+            unit = _coerce_float(li.get("unit_price"))
+            agreed = _coerce_float(li.get("agreed_unit_price"))
+            line_total = _coerce_float(li.get("line_total"))
+            faktisk_total = line_total if line_total is not None else (
+                round(unit * qty, 2) if (unit is not None and qty is not None) else None
+            )
+            agreed_total = (
+                round(agreed * qty, 2) if (agreed is not None and qty is not None) else None
+            )
+            sum_over = _coerce_float(li.get("discrepancy_amount"))
+            if sum_over is None and faktisk_total is not None and agreed_total is not None:
+                sum_over = round(faktisk_total - agreed_total, 2)
+            by_config[cfg].append(
+                {
+                    "faktura_nummer": str(invoice_no),
+                    "varenummer": (li.get("item_number") or "").strip() if li.get("item_number") else "",
+                    "beskrivelse": (li.get("description") or "").strip(),
+                    "faktisk_købspris": unit,
+                    "rabatpris": agreed,
+                    "antal": qty,
+                    "faktisk_total": faktisk_total,
+                    "total_rabatpris": agreed_total,
+                    "sum_overbetalt": sum_over,
+                }
+            )
+
+    # --- Top: Model-sammenligning block ---
+    title = ws.cell(row=1, column=1, value="Fejloversigt — model-sammenligning")
+    title.font = Font(bold=True, size=14)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=10)
+
+    cmp_headers = [
+        "Model",
+        "# uoverensstemmelser",
+        "Total sum overbetalt (DKK)",
+    ]
+    for col, h in enumerate(cmp_headers, start=1):
+        c = ws.cell(row=3, column=col, value=h)
+        c.fill = HEADER_FILL
+        c.font = HEADER_FONT
+    row = 4
+    for cfg in config_order:
+        items = by_config[cfg]
+        total_over = sum((x["sum_overbetalt"] or 0) for x in items)
+        ws.cell(row=row, column=1, value=cfg)
+        ws.cell(row=row, column=2, value=len(items))
+        ws.cell(row=row, column=3, value=round(total_over, 2))
+        row += 1
+
+    # --- Detail block ---
+    detail_start_row = row + 2
+    title2 = ws.cell(row=detail_start_row, column=1, value="Detaljer pr. uoverensstemmelse")
+    title2.font = Font(bold=True, size=12)
+    ws.merge_cells(
+        start_row=detail_start_row,
+        start_column=1,
+        end_row=detail_start_row,
+        end_column=10,
+    )
+
+    headers = [
+        "Model",
+        "Faktura Nummer",
+        "Varenummer",
+        "Beskrivelse",
+        "Faktisk købspris",
+        "Rabatpris",
+        "Antal",
+        "Faktisk total pris",
+        "Total rabatpris",
+        "Sum overbetalt",
+    ]
+    header_row_idx = detail_start_row + 2
+    for col, h in enumerate(headers, start=1):
+        c = ws.cell(row=header_row_idx, column=col, value=h)
+        c.fill = HEADER_FILL
+        c.font = HEADER_FONT
+        c.alignment = Alignment(horizontal="left", vertical="center")
+
+    row = header_row_idx + 1
+    grand_total = 0.0
+    for cfg in config_order:
+        items = by_config[cfg]
+        if not items:
+            ws.cell(row=row, column=1, value=cfg)
+            ws.cell(
+                row=row, column=2,
+                value="(ingen uoverensstemmelser fundet for denne model)",
+            )
+            row += 1
+            continue
+        for it in items:
+            ws.cell(row=row, column=1, value=cfg)
+            ws.cell(row=row, column=2, value=it["faktura_nummer"])
+            ws.cell(row=row, column=3, value=it["varenummer"])
+            ws.cell(row=row, column=4, value=it["beskrivelse"][:120])
+            ws.cell(row=row, column=5, value=it["faktisk_købspris"])
+            ws.cell(row=row, column=6, value=it["rabatpris"])
+            ws.cell(row=row, column=7, value=it["antal"])
+            ws.cell(row=row, column=8, value=it["faktisk_total"])
+            ws.cell(row=row, column=9, value=it["total_rabatpris"])
+            ws.cell(row=row, column=10, value=it["sum_overbetalt"])
+            for col in (5, 6, 8, 9, 10):
+                ws.cell(row=row, column=col).number_format = '#,##0.00 "kr."'
+            row += 1
+        # Subtotal row for this config
+        subtotal = round(sum((x["sum_overbetalt"] or 0) for x in items), 2)
+        grand_total += subtotal
+        sub_label = ws.cell(
+            row=row, column=1, value=f"Samlet for {cfg} (manglende rabat):"
+        )
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=9)
+        sub_label.fill = SUBTOTAL_FILL
+        sub_label.font = SUBTOTAL_FONT
+        sub_label.alignment = Alignment(horizontal="right", vertical="center")
+        sub_val = ws.cell(row=row, column=10, value=subtotal)
+        sub_val.fill = SUBTOTAL_FILL
+        sub_val.font = SUBTOTAL_FONT
+        sub_val.number_format = '#,##0.00 "kr."'
+        row += 2  # blank row before next config
+
+    # Auto-filter on the detail header so users can filter by Model
+    ws.auto_filter.ref = (
+        f"A{header_row_idx}:J{max(header_row_idx, row - 1)}"
+    )
+    # Freeze the detail header row
+    ws.freeze_panes = ws.cell(row=header_row_idx + 1, column=1).coordinate
+
+    # Column widths
+    widths = {1: 22, 2: 16, 3: 16, 4: 38, 5: 16, 6: 14, 7: 8, 8: 18, 9: 16, 10: 16}
+    for idx, w in widths.items():
+        ws.column_dimensions[get_column_letter(idx)].width = w
+
+
+def _coerce_float(v):
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def _fmt_num(v) -> str:
