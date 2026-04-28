@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Regression test — DiFacto Feedback{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Regression test</h2>
+  <p>Kører de fakturaer der har feedback igennem prompten igen og sammenligner med dine mærkninger. Bruges til at verificere om en prompt-ændring forbedrer eller forværrer fejl-detektionen.</p>
+  <div class="grid-2">
+    <div class="stat"><div class="label">Feedback entries</div><div class="value">{{ feedback_count }}</div></div>
+    <div class="stat"><div class="label">Unikke fakturaer</div><div class="value">{{ invoice_ids | length }}</div></div>
+    <div class="stat"><div class="label">På disk lige nu</div><div class="value ok">{{ available_count }}</div></div>
+    <div class="stat"><div class="label">Modeller i feedback</div><div class="value">{{ config_names | length }}</div></div>
+  </div>
+  {% if missing_invoices %}
+    <p class="warn" style="margin-top: 10px;">
+      ⚠ {{ missing_invoices | length }} faktura(er) i feedback findes ikke i invoices/-mappen lige nu — disse springes over. Genupload for at inkludere dem.
+    </p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Start regression-kørsel</h2>
+  {% if feedback_count == 0 %}
+    <p class="muted">Du har ingen feedback endnu. Tilføj feedback for nogle (faktura, model)-par først.</p>
+  {% elif available_count == 0 %}
+    <p class="muted">Ingen af fakturaerne i feedback er på disk lige nu. Genupload dem først.</p>
+  {% else %}
+    <form method="post" action="{{ url_for('feedback.regression_start') }}">
+      <p>Vælg modeller at re-køre. Hver model du krydser af koster ca. det samme som den oprindelige run for de samme fakturaer.</p>
+      <div class="config-grid">
+        {% for cfg in config_names %}
+          <label class="config-check">
+            <input type="checkbox" name="configs" value="{{ cfg }}" checked>
+            {{ cfg }}
+          </label>
+        {% endfor %}
+      </div>
+      <p class="warn" style="margin-top: 10px; font-size: 12px;">
+        Bemærk: dette kalder API'erne med dine nøgler — koster kreditter. Du har {{ available_count }} faktura(er) × valgte modeller.
+      </p>
+      <button type="submit" style="margin-top: 8px;">Kør regression-test</button>
+    </form>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Tidligere regression-kørsler</h2>
+  {% if runs %}
+    <table>
+      <thead><tr><th>Tidspunkt</th><th>Status</th><th>Modeller</th><th>Fremskridt</th><th></th></tr></thead>
+      <tbody>
+        {% for r in runs %}
+        <tr>
+          <td class="muted">{{ r.started_at }}</td>
+          <td>
+            {% if r.status == 'done' %}<span class="badge done">done</span>
+            {% elif r.status == 'error' %}<span class="badge error">error</span>
+            {% else %}<span class="badge running">{{ r.status }}</span>{% endif %}
+          </td>
+          <td>{{ r.config_names | join(', ') }}</td>
+          <td>{{ r.completed_pairs }} / {{ r.total_pairs }}</td>
+          <td><a href="{{ url_for('feedback.regression_view', run_id=r.id) }}">Se</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">Ingen regression-kørsler endnu.</p>
+  {% endif %}
+</div>
+
+<p><a href="{{ url_for('feedback.index') }}">← Tilbage til dashboard</a></p>
+
+{% endblock %}

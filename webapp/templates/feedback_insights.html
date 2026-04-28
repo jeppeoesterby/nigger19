@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Insights — DiFacto Feedback{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Aggregated insights</h2>
+  <p class="muted">Beregnet ud fra {{ total }} feedback-entries. Brug det her til at se hvilke modeller / leverandører / aftale-typer der er hårdest, og hvor prompten skal skærpes.</p>
+</div>
+
+<div class="card">
+  <h2>Per model</h2>
+  {% if per_config %}
+    <table>
+      <thead><tr>
+        <th>Model</th>
+        <th>Reviews</th>
+        <th>Flagged</th>
+        <th>Correct</th>
+        <th>FP</th>
+        <th>Wrong amt.</th>
+        <th>Missed</th>
+        <th>Precision</th>
+        <th>Recall (est.)</th>
+      </tr></thead>
+      <tbody>
+        {% for m in per_config %}
+        <tr>
+          <td><strong>{{ m.config_name }}</strong></td>
+          <td>{{ m.feedback_count }}</td>
+          <td>{{ m.flagged_total }}</td>
+          <td class="ok">{{ m.correct }}</td>
+          <td class="warn">{{ m.false_positive }}</td>
+          <td>{{ m.wrong_amount }}</td>
+          <td class="err">{{ m.missed_count }}</td>
+          <td>{% if m.precision is not none %}{{ '%.0f' | format(m.precision * 100) }}%{% else %}—{% endif %}</td>
+          <td>{% if m.recall_estimate is not none %}{{ '%.0f' | format(m.recall_estimate * 100) }}%{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted" style="font-size: 12px; margin-top: 6px;">
+      Precision = correct / (correct + FP + wrong_amount).
+      Recall (est.) = (correct + 0,5 × wrong_amount) / (correct + 0,5 × wrong_amount + missed).
+    </p>
+  {% else %}
+    <p class="muted">Ingen feedback endnu.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Per leverandør</h2>
+  {% if per_supplier %}
+    <table>
+      <thead><tr><th>Leverandør</th><th>Reviews</th><th>Correct</th><th>FP</th><th>Missed</th><th>Precision</th><th>Recall (est.)</th></tr></thead>
+      <tbody>
+        {% for g in per_supplier %}
+        <tr>
+          <td>{{ g.label }}</td>
+          <td>{{ g.feedback_count }}</td>
+          <td class="ok">{{ g.correct }}</td>
+          <td class="warn">{{ g.false_positive }}</td>
+          <td class="err">{{ g.missed_count }}</td>
+          <td>{% if g.precision is not none %}{{ '%.0f' | format(g.precision * 100) }}%{% else %}—{% endif %}</td>
+          <td>{% if g.recall_estimate is not none %}{{ '%.0f' | format(g.recall_estimate * 100) }}%{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">—</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Per aftale-type</h2>
+  {% if per_agreement_type %}
+    <table>
+      <thead><tr><th>Type</th><th>Reviews</th><th>Correct</th><th>FP</th><th>Missed</th><th>Precision</th><th>Recall (est.)</th></tr></thead>
+      <tbody>
+        {% for g in per_agreement_type %}
+        <tr>
+          <td>{{ g.label }}</td>
+          <td>{{ g.feedback_count }}</td>
+          <td class="ok">{{ g.correct }}</td>
+          <td class="warn">{{ g.false_positive }}</td>
+          <td class="err">{{ g.missed_count }}</td>
+          <td>{% if g.precision is not none %}{{ '%.0f' | format(g.precision * 100) }}%{% else %}—{% endif %}</td>
+          <td>{% if g.recall_estimate is not none %}{{ '%.0f' | format(g.recall_estimate * 100) }}%{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">—</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Mønstre i missede fejl</h2>
+  <p class="muted">Heuristikker over de fejl modellerne missede. Bruges som direkte signal til prompt-tweaks.</p>
+  {% if miss_patterns %}
+    {% for p in miss_patterns %}
+      <div style="background: var(--panel-2); border-radius: 6px; padding: 12px; margin-bottom: 10px;">
+        <strong>{{ p.name }}</strong> · <span class="err">{{ p.count }}</span> tilfælde
+        {% if p.examples %}
+          <ul style="margin: 6px 0 0 16px; font-size: 12px; color: var(--muted);">
+            {% for ex in p.examples %}<li>{{ ex }}</li>{% endfor %}
+          </ul>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted">Ingen mønstre fundet endnu — flere feedback-entries giver bedre signal.</p>
+  {% endif %}
+</div>
+
+<p><a href="{{ url_for('feedback.index') }}">← Tilbage til dashboard</a></p>
+
+{% endblock %}
