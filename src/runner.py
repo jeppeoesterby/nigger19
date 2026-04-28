@@ -575,7 +575,21 @@ def run(
         # enough wait time. Reset the consecutive counter on both success AND
         # transient failure so rate-limit churn doesn't kill a healthy config.
         notes_lower = (row.get("notes") or "").lower()
-        is_transient_failure = any(
+        # Hard PERMANENT signals beat transient ones. e.g. Google
+        # RESOURCE_EXHAUSTED with "limit: 0" looks like a 429 but is actually
+        # "you don't have access to this model" - waiting won't help.
+        is_billing_quota = any(
+            marker in notes_lower
+            for marker in (
+                "limit: 0",
+                "free_tier",
+                "resource_exhausted",
+                "exceeded your current quota",
+                "plan and billing",
+                "billing",
+            )
+        )
+        is_transient_failure = (not is_billing_quota) and any(
             marker in notes_lower
             for marker in (
                 "429",

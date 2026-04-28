@@ -25,10 +25,29 @@ log = logging.getLogger(__name__)
 def _is_retriable(exc: BaseException) -> bool:
     """Retry only on transient failures: rate limits, timeouts, 5xx, network
     errors. Never retry on 4xx client errors (wrong model, bad key, bad
-    request) — those are configuration bugs that retrying can't fix."""
+    request) — those are configuration bugs that retrying can't fix.
+
+    Also: certain 429s aren't actually transient. Google's "limit: 0" /
+    free-tier quota errors mean the model is straight-up unavailable on the
+    current billing plan. Those should fail fast so the circuit breaker
+    trips."""
     name = type(exc).__name__
     msg = str(exc).lower()
-    # Non-retriable signals anywhere in the class name or message.
+
+    # Hard non-retriable: billing / quota-zero / permission. The "429" status
+    # is misleading here — these don't resolve by waiting.
+    billing_markers = (
+        "limit: 0",
+        "free_tier",  # Google "free_tier_input_token_count" / "free_tier_requests"
+        "resource_exhausted",  # Google's RESOURCE_EXHAUSTED status (often quota)
+        "billing",
+        "exceeded your current quota",
+        "plan and billing",
+    )
+    if any(m in msg for m in billing_markers):
+        return False
+
+    # Other deterministic 4xx → not retriable.
     non_retriable_markers = (
         "notfound",
         "not_found",
@@ -45,7 +64,8 @@ def _is_retriable(exc: BaseException) -> bool:
         return False
     if any(m in msg for m in ("404", "401", "403", "400", "422")):
         return False
-    # Retriable signals.
+
+    # Retriable signals: real rate limits (paid tier per-minute), timeouts, 5xx.
     retriable_markers = (
         "ratelimit",
         "rate_limit",
@@ -60,7 +80,7 @@ def _is_retriable(exc: BaseException) -> bool:
         return True
     if any(m in msg for m in ("429", "500", "502", "503", "504", "timeout", "temporarily")):
         return True
-    # Unknown -> retry once. `stop_after_attempt(3)` still caps us.
+    # Unknown -> retry once. `stop_after_attempt(6)` still caps us.
     return True
 
 
