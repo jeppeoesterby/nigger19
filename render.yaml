@@ -6,6 +6,8 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn --workers 1 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT wsgi:app
     autoDeploy: true
+    previews:
+      generation: automatic
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
@@ -15,3 +17,7 @@ services:
         value: 3.11.9
       - key: FLASK_SECRET_KEY
         generateValue: true
+
+previews:
+  generation: automatic
+  expireAfterDays: 7
