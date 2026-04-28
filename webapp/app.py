@@ -37,6 +37,7 @@ from src.clients import build_clients
 from src.configs import CONFIGS, filter_configs
 from src.prompts import TEMPLATE_FIELDS, PromptTemplates
 from src.runner import load_jobs, run
+from .feedback_blueprint import bp as feedback_bp
 
 log = logging.getLogger(__name__)
 
@@ -433,6 +434,11 @@ def create_app(config_path: str = "config.yaml") -> Flask:
         gt_path.write_bytes(content)
         flash(f"Ground truth saved ({len(parsed)} invoice entries).")
         return redirect(url_for("index"))
+
+    # Register the feedback / benchmark / regression blueprint as an add-on.
+    # All feedback routes live under /feedback/* and do not affect the
+    # existing routes above.
+    app.register_blueprint(feedback_bp)
 
     @app.route("/clear", methods=["POST"])
     def clear_data():

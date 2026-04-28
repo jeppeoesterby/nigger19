@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Review feedback — {{ entry.invoice_id }} :: {{ entry.config_name }}{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Feedback: {{ entry.invoice_id }} — {{ entry.config_name }}</h2>
+  <p class="muted">Run: <code>{{ filename }}</code>{% if is_existing %} · <span class="badge done">redigerer eksisterende</span>{% endif %}</p>
+</div>
+
+<form method="post" action="{{ url_for('feedback.save_review', filename=filename, invoice_id=entry.invoice_id, config_name=entry.config_name) }}">
+
+<div class="card">
+  <h2>1. Faktura-metadata</h2>
+  <div class="grid-2">
+    <div>
+      <label>Leverandør (modellen ekstraherede)</label>
+      <input type="text" name="supplier_extracted" value="{{ entry.supplier_extracted or '' }}">
+    </div>
+    <div>
+      <label>Leverandør (kanonisk navn — fx "STARK")</label>
+      <input type="text" name="supplier_canonical" value="{{ entry.supplier_canonical or '' }}" placeholder="Bruges til at gruppere insights">
+    </div>
+    <div>
+      <label>Faktura-nr.</label>
+      <input type="text" name="invoice_number_extracted" value="{{ entry.invoice_number_extracted or '' }}">
+    </div>
+    <div>
+      <label>Aftale-type</label>
+      <select name="agreement_type" style="background: var(--panel-2); color: var(--text); border: 1px solid var(--border); padding: 8px; border-radius: 4px; width: 100%;">
+        {% for t in agreement_types %}
+          <option value="{{ t }}" {% if entry.agreement_type == t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <div style="margin-top: 12px;">
+    <label>Aftale-noter (fx "STARK projektaftale, kvartalsvis indeks-justering")</label>
+    <textarea name="agreement_notes" rows="2" style="width: 100%; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); padding: 8px; border-radius: 4px;">{{ entry.agreement_notes or '' }}</textarea>
+  </div>
+</div>
+
+<div class="card">
+  <h2>2. Modellens fejl-flags — markér hver linje</h2>
+  {% if entry.line_feedbacks %}
+    <p class="muted">Modellen flagede disse linjer som uoverensstemmelser. Markér om hver er korrekt fanget, falsk positiv, eller om beløbet er forkert.</p>
+    {% for lf in entry.line_feedbacks %}
+      <div style="background: var(--panel-2); border-radius: 6px; padding: 14px; margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: baseline;">
+          <strong>Linje {{ lf.line_index + 1 }}: {{ lf.model_description or '(ingen beskrivelse)' }}</strong>
+          <span class="muted">Varenr: {{ lf.model_item_number or '—' }}</span>
+        </div>
+        <p class="muted" style="margin: 6px 0;">
+          Modellen sagde: {{ lf.model_quantity }} stk · faktureret {{ lf.model_unit_price }} kr/stk · aftalt {{ lf.model_agreed_unit_price }} kr/stk · diff {{ lf.model_discrepancy_amount }} kr
+        </p>
+        <div class="grid-2" style="margin-top: 8px;">
+          <div>
+            <label>Verdict</label>
+            <select name="line_verdict_{{ lf.line_index }}" style="background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px; border-radius: 4px; width: 100%;">
+              {% for v in line_verdicts %}
+                <option value="{{ v }}" {% if lf.verdict == v %}selected{% endif %}>{{ v }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>Korrekt aftalt pris (hvis modellen tog fejl)</label>
+            <input type="text" name="line_correct_agreed_{{ lf.line_index }}" value="{{ lf.correct_agreed_unit_price if lf.correct_agreed_unit_price is not none else '' }}">
+          </div>
+          <div>
+            <label>Korrekt sum overbetalt</label>
+            <input type="text" name="line_correct_diff_{{ lf.line_index }}" value="{{ lf.correct_discrepancy_amount if lf.correct_discrepancy_amount is not none else '' }}">
+          </div>
+          <div>
+            <label>Noter</label>
+            <input type="text" name="line_notes_{{ lf.line_index }}" value="{{ lf.notes or '' }}" placeholder="Hvorfor denne verdict?">
+          </div>
+        </div>
+        <input type="hidden" name="line_correct_unit_{{ lf.line_index }}" value="{{ lf.correct_unit_price if lf.correct_unit_price is not none else '' }}">
+      </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted">Modellen flagede ingen fejl på denne faktura.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>3. Fejl modellen missede</h2>
+  <p class="muted">Tilføj uoverensstemmelser modellen IKKE fangede. Disse er det vigtigste signal til prompt-tuning.</p>
+  <div id="missed-rows">
+    {% for md in entry.missed_discrepancies %}
+      {% set n = loop.index0 %}
+      <div class="missed-row" style="background: var(--panel-2); border-radius: 6px; padding: 14px; margin-bottom: 12px;">
+        <div class="grid-2">
+          <div>
+            <label>Varenummer</label>
+            <input type="text" name="missed_item_{{ n }}" value="{{ md.item_number or '' }}">
+          </div>
+          <div>
+            <label>Beskrivelse</label>
+            <input type="text" name="missed_desc_{{ n }}" value="{{ md.description or '' }}" required>
+          </div>
+          <div>
+            <label>Antal</label>
+            <input type="text" name="missed_qty_{{ n }}" value="{{ md.quantity if md.quantity is not none else '' }}">
+          </div>
+          <div>
+            <label>Faktureret pris/stk</label>
+            <input type="text" name="missed_unit_{{ n }}" value="{{ md.unit_price if md.unit_price is not none else '' }}">
+          </div>
+          <div>
+            <label>Aftalt pris/stk</label>
+            <input type="text" name="missed_agreed_{{ n }}" value="{{ md.correct_agreed_unit_price if md.correct_agreed_unit_price is not none else '' }}">
+          </div>
+          <div>
+            <label>Sum overbetalt (DKK)</label>
+            <input type="text" name="missed_diff_{{ n }}" value="{{ md.discrepancy_amount if md.discrepancy_amount is not none else '' }}">
+          </div>
+        </div>
+        <div style="margin-top: 8px;">
+          <label>Noter</label>
+          <input type="text" name="missed_notes_{{ n }}" value="{{ md.notes or '' }}">
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  <button type="button" class="secondary" onclick="addMissedRow()">+ Tilføj manglende fejl</button>
+</div>
+
+<div class="card">
+  <h2>4. Overordnet verdict</h2>
+  <div class="grid-2">
+    <div>
+      <label>Samlet vurdering</label>
+      <select name="overall_verdict" style="background: var(--panel-2); color: var(--text); border: 1px solid var(--border); padding: 8px; border-radius: 4px; width: 100%;">
+        {% for v in overall_verdicts %}
+          <option value="{{ v }}" {% if entry.overall_verdict == v %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Noter til hele kørslen</label>
+      <input type="text" name="overall_notes" value="{{ entry.overall_notes or '' }}">
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 16px;">
+  <button type="submit">Gem feedback</button>
+  <a href="{{ url_for('feedback.pick_pair', filename=filename) }}" class="btn secondary">Annullér</a>
+</div>
+
+</form>
+
+<script>
+let missedCounter = {{ entry.missed_discrepancies | length }};
+function addMissedRow() {
+  const n = missedCounter++;
+  const html = `
+    <div class="missed-row" style="background: var(--panel-2); border-radius: 6px; padding: 14px; margin-bottom: 12px;">
+      <div class="grid-2">
+        <div><label>Varenummer</label><input type="text" name="missed_item_${n}"></div>
+        <div><label>Beskrivelse</label><input type="text" name="missed_desc_${n}" required></div>
+        <div><label>Antal</label><input type="text" name="missed_qty_${n}"></div>
+        <div><label>Faktureret pris/stk</label><input type="text" name="missed_unit_${n}"></div>
+        <div><label>Aftalt pris/stk</label><input type="text" name="missed_agreed_${n}"></div>
+        <div><label>Sum overbetalt (DKK)</label><input type="text" name="missed_diff_${n}"></div>
+      </div>
+      <div style="margin-top: 8px;"><label>Noter</label><input type="text" name="missed_notes_${n}"></div>
+    </div>
+  `;
+  document.getElementById("missed-rows").insertAdjacentHTML("beforeend", html);
+}
+</script>
+
+{% endblock %}

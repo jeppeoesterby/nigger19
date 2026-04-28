@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Feedback — DiFacto LLM Eval{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Feedback dashboard</h2>
+  <p>Indtastede mærkninger driver prompt-iteration og regression-tests. Du retter modellens output, og vi måler om næste prompt-version forbedrer eller forværrer det.</p>
+  <div class="grid-2" style="margin-top: 12px;">
+    <div class="stat">
+      <div class="label">Feedback entries</div>
+      <div class="value">{{ summary.total_entries }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Unique invoices</div>
+      <div class="value">{{ summary.total_invoices }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Models reviewed</div>
+      <div class="value">{{ summary.total_configs }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Correct flags</div>
+      <div class="value ok">{{ summary.total_correct }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">False positives</div>
+      <div class="value warn">{{ summary.total_false_positive }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Missed discrepancies</div>
+      <div class="value err">{{ summary.total_missed }}</div>
+    </div>
+  </div>
+  <p style="margin-top: 14px;">
+    <a class="btn" href="{{ url_for('feedback.insights') }}">Se insights</a>
+    <a class="btn secondary" href="{{ url_for('feedback.regression_index') }}">Regression test</a>
+    <a class="btn secondary" href="{{ url_for('feedback.export_xlsx') }}">Eksport Excel</a>
+  </p>
+</div>
+
+<div class="card">
+  <h2>Tilføj feedback fra et tidligere run</h2>
+  <p>Vælg et eval-Excel, så viser vi alle (faktura, model)-par hvor du kan markere fejlene som korrekte/forkerte/manglede.</p>
+  {% if runs %}
+    <table>
+      <thead><tr><th>Run</th><th>Modificeret</th><th>Størrelse</th><th></th></tr></thead>
+      <tbody>
+        {% for r in runs %}
+        <tr>
+          <td>{{ r.filename }}</td>
+          <td class="muted">{{ r.mtime | int }}</td>
+          <td class="muted">{{ r.size_kb }} KB</td>
+          <td><a class="btn" href="{{ url_for('feedback.pick_pair', filename=r.filename) }}">Åbn</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">Ingen runs endnu. Kør en evaluering først, så kan du tilføje feedback bagefter.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Seneste feedback</h2>
+  {% if recent_feedback %}
+    <table>
+      <thead><tr>
+        <th>Tidspunkt</th>
+        <th>Faktura</th>
+        <th>Model</th>
+        <th>Leverandør</th>
+        <th>Aftale</th>
+        <th>Verdict</th>
+        <th>Linjer</th>
+        <th>Missed</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+        {% for e in recent_feedback %}
+        <tr>
+          <td class="muted">{{ e.timestamp }}</td>
+          <td>{{ e.invoice_id }}</td>
+          <td>{{ e.config_name }}</td>
+          <td>{{ e.supplier_canonical or e.supplier_extracted or '—' }}</td>
+          <td><span class="badge">{{ e.agreement_type }}</span></td>
+          <td>
+            {% if e.overall_verdict == 'good' %}<span class="ok">{{ e.overall_verdict }}</span>
+            {% elif e.overall_verdict == 'poor' %}<span class="err">{{ e.overall_verdict }}</span>
+            {% else %}<span class="warn">{{ e.overall_verdict }}</span>{% endif %}
+          </td>
+          <td>{{ e.line_feedbacks | length }}</td>
+          <td>{{ e.missed_discrepancies | length }}</td>
+          <td>
+            {% if e.run_filename %}
+              <a href="{{ url_for('feedback.review', filename=e.run_filename, invoice_id=e.invoice_id, config_name=e.config_name) }}">Rediger</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">Endnu ingen feedback registreret.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Regression result — {{ state.id }}{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Regression-kørsel #{{ state.id }}</h2>
+  <p class="muted">Startet {{ state.started_at }} · {{ state.config_names | join(', ') }}</p>
+  <p>
+    Status:
+    {% if state.status == 'done' %}<span class="badge done">done</span>
+    {% elif state.status == 'error' %}<span class="badge error">error</span>
+    {% else %}<span class="badge running">{{ state.status }}</span>{% endif %}
+    · Fremskridt: {{ state.completed_pairs }} / {{ state.total_pairs }}
+  </p>
+  {% if state.error %}<p class="err">Fejl: {{ state.error }}</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Sammenligning vs. feedback ground truth</h2>
+  <div class="grid-2">
+    <div class="stat"><div class="label">Forbedringer</div><div class="value ok">{{ improvements }}</div></div>
+    <div class="stat"><div class="label">Regressioner</div><div class="value err">{{ regressions }}</div></div>
+    <div class="stat"><div class="label">Stabile</div><div class="value">{{ stable }}</div></div>
+    <div class="stat"><div class="label">Nye findings</div><div class="value warn">{{ new_findings }}</div></div>
+  </div>
+  <p class="muted" style="margin-top: 10px; font-size: 12px;">
+    Forbedringer = (tidligere missede fejl der nu er fanget) + (tidligere falske positiver der nu er droppet).
+    Regressioner = tidligere korrekte fejl der nu missed.
+    Nye findings = uoverensstemmelser modellen flagede denne gang som ikke er kategoriseret i feedback (kan være rigtige eller falske).
+  </p>
+</div>
+
+<div class="card">
+  <h2>Per (faktura, model)</h2>
+  {% if state.results %}
+    <table>
+      <thead><tr>
+        <th>Faktura</th>
+        <th>Model</th>
+        <th>Stadig fanget</th>
+        <th>Nu missed</th>
+        <th>Nu fanget</th>
+        <th>Stadig missed</th>
+        <th>FP nu droppet</th>
+        <th>FP stadig</th>
+        <th>Nye</th>
+      </tr></thead>
+      <tbody>
+        {% for r in state.results %}
+        <tr>
+          <td>{{ r.invoice_id }}</td>
+          <td>{{ r.config_name }}</td>
+          <td class="ok">{{ r.previously_correct_still_caught }}</td>
+          <td class="err"><strong>{{ r.previously_correct_now_missed }}</strong></td>
+          <td class="ok"><strong>{{ r.previously_missed_now_caught }}</strong></td>
+          <td>{{ r.previously_missed_still_missed }}</td>
+          <td class="ok">{{ r.previously_fp_now_dropped }}</td>
+          <td class="warn">{{ r.previously_fp_still_present }}</td>
+          <td>{{ r.new_findings }}</td>
+        </tr>
+        {% if r.notes %}
+          <tr><td colspan="9" style="padding-left: 20px; font-size: 12px; color: var(--muted);">
+            {% for n in r.notes %}{{ n }}<br>{% endfor %}
+          </td></tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">Ingen resultater endnu — vent til kørslen er færdig (refresh siden).</p>
+  {% endif %}
+</div>
+
+{% if state.log %}
+<div class="card">
+  <h2>Log</h2>
+  <pre>{% for line in state.log %}{{ line }}
+{% endfor %}</pre>
+</div>
+{% endif %}
+
+<p><a href="{{ url_for('feedback.regression_index') }}">← Tilbage til regression</a></p>
+
+{% if state.status not in ('done', 'error') %}
+<script>setTimeout(() => location.reload(), 4000);</script>
+{% endif %}
+
+{% endblock %}

@@ -13,7 +13,11 @@
           <td>{{ r.name }}</td>
           <td class="muted">{{ r.mtime }}</td>
           <td class="muted">{{ r.size_kb }} KB</td>
-          <td><a href="{{ url_for('download_result', filename=r.name) }}">Download</a></td>
+          <td>
+            <a href="{{ url_for('download_result', filename=r.name) }}">Download</a>
+            ·
+            <a href="{{ url_for('feedback.pick_pair', filename=r.name) }}">Feedback</a>
+          </td>
         </tr>
         {% endfor %}
       </tbody>

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Vælg par til feedback — {{ filename }}{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Vælg (faktura, model) til feedback</h2>
+  <p class="muted">Run: <code>{{ filename }}</code></p>
+  <p>Klik en række for at tilføje eller redigere feedback for det par. Markerede par har allerede feedback.</p>
+</div>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Faktura</th>
+        <th>Model</th>
+        <th>Leverandør</th>
+        <th>Faktura-nr.</th>
+        <th>#Fejl</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in pairs %}
+      <tr>
+        <td>{{ p.invoice_id }}</td>
+        <td>{{ p.config_name }}</td>
+        <td>{{ p.supplier }}</td>
+        <td>{{ p.invoice_number }}</td>
+        <td>{{ p.discrepancy_count }}</td>
+        <td>
+          {% if p.has_feedback %}
+            <span class="badge done">{{ p.verdict or 'reviewed' }}</span>
+          {% else %}
+            <span class="muted">—</span>
+          {% endif %}
+        </td>
+        <td>
+          <a class="btn" href="{{ url_for('feedback.review', filename=filename, invoice_id=p.invoice_id, config_name=p.config_name) }}">
+            {% if p.has_feedback %}Rediger{% else %}Tilføj{% endif %}
+          </a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p><a href="{{ url_for('feedback.index') }}">← Tilbage til feedback dashboard</a></p>
+
+{% endblock %}
