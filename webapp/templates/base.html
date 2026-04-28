@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}DiFacto LLM Eval{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --panel-2: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --ok: #4ade80;
+      --warn: #facc15;
+      --err: #f87171;
+      --border: #334155;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.5;
+    }
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+    header nav a {
+      color: var(--muted);
+      text-decoration: none;
+      margin-left: 16px;
+      font-size: 14px;
+    }
+    header nav a:hover { color: var(--text); }
+    .container { max-width: 980px; margin: 0 auto; padding: 24px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .card h2 { margin: 0 0 12px 0; font-size: 16px; font-weight: 600; }
+    .card p { margin: 6px 0; color: var(--muted); font-size: 14px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .stat { background: var(--panel-2); padding: 12px; border-radius: 6px; }
+    .stat .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .err { color: var(--err); }
+    .muted { color: var(--muted); }
+    label { display: block; font-size: 14px; margin-bottom: 6px; }
+    input[type=text], input[type=number] {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 10px;
+      border-radius: 4px;
+      font-size: 14px;
+      width: 100%;
+    }
+    .config-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .config-check {
+      background: var(--panel-2);
+      padding: 10px 12px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .config-check input { accent-color: var(--accent); }
+    button, .btn {
+      background: var(--accent);
+      color: #0f172a;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+    }
+    button.secondary {
+      background: var(--panel-2);
+      color: var(--text);
+    }
+    button:hover { opacity: 0.9; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; }
+    tr:last-child td { border-bottom: none; }
+    .row { display: flex; gap: 12px; align-items: flex-end; }
+    .row > div { flex: 1; }
+    pre {
+      background: #020617;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      color: #cbd5e1;
+      font-family: "SF Mono", Menlo, Consolas, monospace;
+      font-size: 12px;
+      overflow-x: auto;
+      margin: 0;
+    }
+    .log {
+      max-height: 360px;
+      overflow-y: auto;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 10px;
+      background: var(--panel-2);
+      border-radius: 5px;
+      overflow: hidden;
+      margin: 8px 0 4px 0;
+    }
+    .progress-bar > div {
+      height: 100%;
+      background: var(--accent);
+      transition: width 0.3s ease;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge.running { background: #0ea5e9; color: white; }
+    .badge.done { background: var(--ok); color: #052e16; }
+    .badge.error { background: var(--err); color: #450a0a; }
+    .badge.starting { background: var(--warn); color: #422006; }
+    .flash {
+      background: #0c4a6e;
+      border: 1px solid #0ea5e9;
+      color: #e0f2fe;
+      padding: 10px 14px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+      font-size: 14px;
+    }
+    .upload-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    .upload-tile {
+      background: var(--panel-2);
+      border-radius: 6px;
+      padding: 14px;
+    }
+    .upload-tile h3 { margin: 0 0 8px 0; font-size: 14px; font-weight: 600; }
+    .upload-tile p { margin: 4px 0 10px 0; font-size: 12px; color: var(--muted); }
+    .upload-tile input[type=file] {
+      width: 100%;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .upload-tile button {
+      padding: 6px 12px;
+      font-size: 12px;
+      width: 100%;
+    }
+    .danger-btn {
+      background: transparent;
+      border: 1px solid var(--err);
+      color: var(--err);
+      font-size: 12px;
+      padding: 4px 10px;
+    }
+    @media (max-width: 720px) {
+      .upload-grid, .grid-2 { grid-template-columns: 1fr; }
+      .config-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>DiFacto LLM Evaluation Harness</h1>
+  <nav>
+    <a href="{{ url_for('index') }}">Home</a>
+    <a href="{{ url_for('prompts_page') }}">Prompts</a>
+    <a href="{{ url_for('list_results') }}">Results</a>
+  </nav>
+</header>
+<div class="container">
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}
+      {% for m in messages %}
+        <div class="flash">{{ m }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</div>
+</body>
+</html>

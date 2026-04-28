@@ -1,0 +1,557 @@
+"""Flask web UI for the evaluation harness.
+
+Wraps the existing runner so Ivan can trigger runs from a browser, watch
+live progress, and download the Excel report.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import secrets
+import shutil
+import threading
+import uuid
+from collections import deque
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+import yaml
+from dotenv import load_dotenv
+from flask import (
+    Flask,
+    abort,
+    flash,
+    get_flashed_messages,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    url_for,
+)
+from werkzeug.utils import secure_filename
+
+from src.clients import build_clients
+from src.configs import CONFIGS, filter_configs
+from src.prompts import TEMPLATE_FIELDS, PromptTemplates
+from src.runner import load_jobs, run
+
+log = logging.getLogger(__name__)
+
+# In-memory run registry. Fine for a local single-user tool.
+RUNS: dict[str, dict] = {}
+RUNS_LOCK = threading.Lock()
+MAX_LOG_LINES = 500
+
+
+def create_app(config_path: str = "config.yaml") -> Flask:
+    load_dotenv()
+    app = Flask(__name__)
+    cfg_path_abs = Path(config_path).resolve()
+    app.config["CFG_PATH"] = str(cfg_path_abs)
+    # Repo root = directory containing config.yaml. All relative data paths
+    # resolve against this so CWD differences between gunicorn workers and
+    # background threads never matter.
+    app.config["BASE_DIR"] = str(cfg_path_abs.parent)
+    # 2 GB per request. Keeps a ceiling for pathological cases but lets a batch
+    # of 100+ invoices through comfortably.
+    app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024
+    app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(16)
+
+    @app.errorhandler(413)
+    def too_large(_e):
+        return (
+            "<h1>Upload too large</h1>"
+            "<p>Your batch exceeds the per-request size limit. "
+            "Try uploading the invoices in smaller batches (e.g. 30-50 at a time), "
+            "then click Start evaluation when they're all on disk.</p>"
+            "<p><a href='/'>Back</a></p>",
+            413,
+        )
+
+    def _cfg() -> dict:
+        c = yaml.safe_load(Path(app.config["CFG_PATH"]).read_text(encoding="utf-8"))
+        base = Path(app.config["BASE_DIR"])
+        # Absolute-ize every path under `paths:` so relative configs work
+        # regardless of CWD.
+        if isinstance(c.get("paths"), dict):
+            for k, v in list(c["paths"].items()):
+                if not isinstance(v, str):
+                    continue
+                p = Path(v)
+                if not p.is_absolute():
+                    c["paths"][k] = str((base / p).resolve())
+        return c
+
+    def _ensure_data_dirs() -> None:
+        c = _cfg()
+        for key in ("invoices_dir", "agreements_dir", "results_dir"):
+            Path(c["paths"][key]).mkdir(parents=True, exist_ok=True)
+
+    _ensure_data_dirs()
+
+    def _scan_data(cfg_yaml: dict) -> dict:
+        invoices_dir = Path(cfg_yaml["paths"]["invoices_dir"])
+        agreements_dir = Path(cfg_yaml["paths"]["agreements_dir"])
+        gt_path = Path(cfg_yaml["paths"]["ground_truth"])
+
+        info = {
+            "invoices_dir": str(invoices_dir),
+            "agreements_dir": str(agreements_dir),
+            "ground_truth_path": str(gt_path),
+            "ground_truth_exists": gt_path.exists(),
+            "invoice_count_on_disk": 0,
+            "agreement_count_on_disk": 0,
+            "jobs": [],
+            "error": None,
+            "keys_configured": {
+                "anthropic": bool(__import__("os").environ.get("ANTHROPIC_API_KEY")),
+                "google": bool(__import__("os").environ.get("GOOGLE_API_KEY")),
+            },
+            "prompts_customized": not PromptTemplates.load(
+                cfg_yaml.get("paths", {}).get(
+                    "prompts_file",
+                    str(Path(app.config["BASE_DIR"]) / "data" / "prompts.json"),
+                )
+            ).is_default(),
+        }
+        if invoices_dir.exists():
+            invoice_files = sorted(
+                [
+                    p
+                    for p in invoices_dir.iterdir()
+                    if p.is_file() and p.suffix.lower() in {".pdf", ".xlsx"}
+                ],
+                key=lambda p: p.name.lower(),
+            )
+            info["invoice_count_on_disk"] = len(invoice_files)
+            info["invoice_files"] = [
+                {"name": p.name, "size_kb": max(1, p.stat().st_size // 1024)}
+                for p in invoice_files
+            ]
+        else:
+            info["invoice_files"] = []
+        if agreements_dir.exists():
+            agreement_files = sorted(
+                [
+                    p
+                    for p in agreements_dir.iterdir()
+                    if p.is_file() and p.suffix.lower() in {".pdf", ".xlsx"}
+                ],
+                key=lambda p: p.name.lower(),
+            )
+            info["agreement_count_on_disk"] = len(agreement_files)
+            info["agreement_files"] = [
+                {"name": p.name, "size_kb": max(1, p.stat().st_size // 1024)}
+                for p in agreement_files
+            ]
+        else:
+            info["agreement_files"] = []
+        if gt_path.exists():
+            try:
+                jobs = load_jobs(cfg_yaml, limit=None)
+                info["jobs"] = [
+                    {
+                        "id": j.invoice_id,
+                        "agreement": (
+                            ", ".join(p.name for p in j.agreement_paths)
+                            if j.agreement_paths
+                            else None
+                        ),
+                    }
+                    for j in jobs
+                ]
+            except Exception as e:
+                info["error"] = str(e)
+        return info
+
+    def _list_past_results(cfg_yaml: dict) -> list[dict]:
+        results_dir = Path(cfg_yaml["paths"]["results_dir"])
+        if not results_dir.exists():
+            return []
+        out = []
+        for p in sorted(results_dir.glob("eval_*.xlsx"), reverse=True):
+            st = p.stat()
+            out.append(
+                {
+                    "name": p.name,
+                    "size_kb": max(1, st.st_size // 1024),
+                    "mtime": datetime.fromtimestamp(st.st_mtime).strftime(
+                        "%Y-%m-%d %H:%M"
+                    ),
+                }
+            )
+        return out[:25]
+
+    # ---------------- routes ----------------
+
+    @app.route("/")
+    def index():
+        cfg_yaml = _cfg()
+        return render_template(
+            "index.html",
+            configs=[c.name for c in CONFIGS],
+            data_info=_scan_data(cfg_yaml),
+            past_results=_list_past_results(cfg_yaml),
+            cfg=cfg_yaml,
+            active_runs=[
+                r for r in RUNS.values() if r["status"] in ("running", "starting")
+            ],
+        )
+
+    @app.route("/start", methods=["POST"])
+    def start_run():
+        selected_raw = request.form.getlist("configs")
+        selected = selected_raw if selected_raw else None
+        limit_str = request.form.get("limit", "").strip()
+        limit = int(limit_str) if limit_str else None
+        dry_run = bool(request.form.get("dry_run"))
+
+        try:
+            configs = filter_configs(selected)
+        except ValueError as e:
+            return f"<p>Invalid config selection: {e}</p>", 400
+
+        run_id = uuid.uuid4().hex[:8]
+        state = {
+            "id": run_id,
+            "status": "starting",
+            "log": deque(maxlen=MAX_LOG_LINES),
+            "progress": {"completed": 0, "total": 0, "current": ""},
+            "output_path": None,
+            "output_filename": None,
+            "summary": [],
+            "error": None,
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+            "config_names": [c.name for c in configs],
+            "limit": limit,
+            "dry_run": dry_run,
+        }
+        with RUNS_LOCK:
+            RUNS[run_id] = state
+
+        t = threading.Thread(
+            target=_execute_run,
+            args=(run_id, configs, limit, dry_run, _cfg()),
+            daemon=True,
+        )
+        t.start()
+        return redirect(url_for("run_page", run_id=run_id))
+
+    @app.route("/runs/<run_id>")
+    def run_page(run_id: str):
+        with RUNS_LOCK:
+            state = RUNS.get(run_id)
+        if not state:
+            abort(404)
+        return render_template("run.html", run=state)
+
+    @app.route("/runs/<run_id>/status")
+    def run_status(run_id: str):
+        with RUNS_LOCK:
+            state = RUNS.get(run_id)
+        if not state:
+            return jsonify({"error": "not found"}), 404
+        # deque is not JSON-serializable directly; cast to list.
+        payload = {
+            "id": state["id"],
+            "status": state["status"],
+            "progress": state["progress"],
+            "log": list(state["log"]),
+            "output_filename": state["output_filename"],
+            "summary": state["summary"],
+            "error": state["error"],
+            "started_at": state["started_at"],
+            "config_names": state["config_names"],
+            "limit": state["limit"],
+            "dry_run": state["dry_run"],
+        }
+        return jsonify(payload)
+
+    @app.route("/results")
+    def list_results():
+        cfg_yaml = _cfg()
+        return render_template(
+            "results.html", past_results=_list_past_results(cfg_yaml)
+        )
+
+    # ---------------- model discovery ----------------
+
+    @app.route("/models")
+    def list_available_models():
+        """Hit each provider's ListModels endpoint and show what's available.
+        Useful when a config 404s because the model ID is wrong or not
+        enabled on the user's project."""
+        out = {"gemini": [], "claude": [], "errors": []}
+        goog_key = os.environ.get("GOOGLE_API_KEY")
+        if goog_key:
+            try:
+                from google import genai as _genai
+                client = _genai.Client(api_key=goog_key)
+                for m in client.models.list():
+                    name = getattr(m, "name", None) or str(m)
+                    methods = getattr(m, "supported_actions", None) or getattr(
+                        m, "supported_generation_methods", None
+                    )
+                    out["gemini"].append({"name": name, "methods": list(methods) if methods else []})
+            except Exception as e:
+                out["errors"].append(f"gemini: {e}")
+        else:
+            out["errors"].append("GOOGLE_API_KEY not set")
+
+        anth_key = os.environ.get("ANTHROPIC_API_KEY")
+        if anth_key:
+            try:
+                from anthropic import Anthropic
+                a = Anthropic(api_key=anth_key)
+                page = a.models.list(limit=50)
+                for m in page.data:
+                    out["claude"].append({"name": m.id, "display_name": getattr(m, "display_name", "")})
+            except Exception as e:
+                out["errors"].append(f"claude: {e}")
+        else:
+            out["errors"].append("ANTHROPIC_API_KEY not set")
+
+        return jsonify(out)
+
+    # ---------------- prompt editing ----------------
+
+    def _prompts_path() -> Path:
+        default = str(Path(app.config["BASE_DIR"]) / "data" / "prompts.json")
+        return Path(_cfg().get("paths", {}).get("prompts_file", default))
+
+    @app.route("/prompts", methods=["GET"])
+    def prompts_page():
+        templates = PromptTemplates.load(_prompts_path())
+        return render_template(
+            "prompts.html",
+            templates=templates,
+            defaults=PromptTemplates.defaults(),
+            is_default=templates.is_default(),
+        )
+
+    @app.route("/prompts", methods=["POST"])
+    def save_prompts():
+        templates = PromptTemplates.defaults()
+        for f in TEMPLATE_FIELDS:
+            val = request.form.get(f, "").strip()
+            if val:
+                setattr(templates, f, val)
+        templates.save(_prompts_path())
+        flash("Prompts saved. Will be used for the next run.")
+        return redirect(url_for("prompts_page"))
+
+    @app.route("/prompts/reset", methods=["POST"])
+    def reset_prompts():
+        p = _prompts_path()
+        if p.exists():
+            p.unlink()
+        flash("Prompts reset to defaults.")
+        return redirect(url_for("prompts_page"))
+
+    # ---------------- results download ----------------
+
+    @app.route("/results/<path:filename>")
+    def download_result(filename: str):
+        cfg_yaml = _cfg()
+        results_dir = Path(cfg_yaml["paths"]["results_dir"]).resolve()
+        target = (results_dir / filename).resolve()
+        if not str(target).startswith(str(results_dir)):
+            abort(403)
+        if not target.exists():
+            abort(404)
+        return send_from_directory(results_dir, filename, as_attachment=True)
+
+    # ---------------- data upload ----------------
+
+    def _save_files(files, target_dir: Path, allowed_exts: set[str]) -> tuple[int, int]:
+        target_dir = target_dir.resolve()
+        target_dir.mkdir(parents=True, exist_ok=True)
+        saved = skipped = 0
+        for f in files:
+            if not f or not f.filename:
+                continue
+            ext = Path(f.filename).suffix.lower()
+            if ext not in allowed_exts:
+                skipped += 1
+                continue
+            safe = secure_filename(f.filename) or f"upload{ext}"
+            dest = target_dir / safe
+            f.save(str(dest))
+            saved += 1
+        log.info("Saved %d files to %s (skipped %d)", saved, target_dir, skipped)
+        return saved, skipped
+
+    @app.route("/upload/invoices", methods=["POST"])
+    def upload_invoices():
+        cfg_yaml = _cfg()
+        files = request.files.getlist("files")
+        saved, skipped = _save_files(
+            files, Path(cfg_yaml["paths"]["invoices_dir"]), {".pdf", ".xlsx"}
+        )
+        msg = f"Uploaded {saved} invoice file(s)."
+        if skipped:
+            msg += f" Skipped {skipped} file(s) with unsupported extension (only .pdf, .xlsx)."
+        flash(msg)
+        return redirect(url_for("index"))
+
+    @app.route("/upload/agreements", methods=["POST"])
+    def upload_agreements():
+        cfg_yaml = _cfg()
+        files = request.files.getlist("files")
+        saved, skipped = _save_files(
+            files, Path(cfg_yaml["paths"]["agreements_dir"]), {".pdf", ".xlsx"}
+        )
+        msg = f"Uploaded {saved} agreement file(s)."
+        if skipped:
+            msg += f" Skipped {skipped} file(s) with unsupported extension (only .pdf, .xlsx)."
+        flash(msg)
+        return redirect(url_for("index"))
+
+    @app.route("/upload/ground_truth", methods=["POST"])
+    def upload_ground_truth():
+        cfg_yaml = _cfg()
+        f = request.files.get("file")
+        gt_path = Path(cfg_yaml["paths"]["ground_truth"])
+        if not f or not f.filename:
+            flash("No file selected.")
+            return redirect(url_for("index"))
+        if Path(f.filename).suffix.lower() != ".json":
+            flash("Ground truth must be a .json file.")
+            return redirect(url_for("index"))
+        content = f.read()
+        try:
+            parsed = json.loads(content)
+            if not isinstance(parsed, dict):
+                raise ValueError("ground_truth.json must be a JSON object")
+        except Exception as e:
+            flash(f"Invalid JSON: {e}")
+            return redirect(url_for("index"))
+        gt_path.parent.mkdir(parents=True, exist_ok=True)
+        gt_path.write_bytes(content)
+        flash(f"Ground truth saved ({len(parsed)} invoice entries).")
+        return redirect(url_for("index"))
+
+    @app.route("/clear", methods=["POST"])
+    def clear_data():
+        cfg_yaml = _cfg()
+        what = request.form.get("what", "")
+        removed = 0
+        if what == "invoices":
+            d = Path(cfg_yaml["paths"]["invoices_dir"])
+            if d.exists():
+                for p in d.iterdir():
+                    if p.is_file() and p.suffix.lower() in {".pdf", ".xlsx"}:
+                        p.unlink()
+                        removed += 1
+            flash(f"Deleted {removed} invoice file(s).")
+        elif what == "agreements":
+            d = Path(cfg_yaml["paths"]["agreements_dir"])
+            if d.exists():
+                for p in d.iterdir():
+                    if p.is_file() and p.suffix.lower() in {".pdf", ".xlsx"}:
+                        p.unlink()
+                        removed += 1
+            flash(f"Deleted {removed} agreement file(s).")
+        elif what == "ground_truth":
+            p = Path(cfg_yaml["paths"]["ground_truth"])
+            if p.exists():
+                p.unlink()
+                flash("Ground truth deleted.")
+            else:
+                flash("No ground truth to delete.")
+        elif what == "all":
+            for key in ("invoices_dir", "agreements_dir"):
+                d = Path(cfg_yaml["paths"][key])
+                if d.exists():
+                    shutil.rmtree(d)
+                    d.mkdir(parents=True, exist_ok=True)
+            p = Path(cfg_yaml["paths"]["ground_truth"])
+            if p.exists():
+                p.unlink()
+            flash("All uploaded data cleared.")
+        else:
+            flash("Unknown clear target.")
+        return redirect(url_for("index"))
+
+    return app
+
+
+def _execute_run(
+    run_id: str,
+    configs: list,
+    limit: Optional[int],
+    dry_run: bool,
+    cfg_yaml: dict,
+) -> None:
+    def emit(event: dict) -> None:
+        try:
+            _emit_inner(event)
+        except Exception:
+            # An error in the UI-side log formatter must never abort the run.
+            # Swallow and log; the background run continues.
+            log.exception("emit callback failed for event %r", event.get("type"))
+
+    def _emit_inner(event: dict) -> None:
+        with RUNS_LOCK:
+            state = RUNS.get(run_id)
+            if not state:
+                return
+            t = event.get("type")
+            if t == "plan":
+                state["log"].append(
+                    f"Plan: {len(event['jobs'])} invoices x "
+                    f"{len(event['configs'])} configs = {event['total']} runs."
+                )
+                state["progress"]["total"] = event["total"]
+            elif t == "start":
+                state["status"] = "running"
+                state["log"].append("Starting API calls...")
+            elif t == "progress":
+                state["progress"]["completed"] = event["completed"]
+                state["progress"]["total"] = event["total"]
+                state["progress"]["current"] = event["current"]
+            elif t == "completed":
+                composite = event.get("composite")
+                if composite is None:
+                    score_str = "extraction-only"
+                else:
+                    score_str = f"composite={composite * 100:.1f}%"
+                notes = event.get("notes") or ""
+                state["log"].append(
+                    f"[{event['completed']}/{event['total']}] "
+                    f"{event['config_name']} :: {event['invoice_id']}  "
+                    f"{score_str}"
+                    + (f"  ({notes})" if notes else "")
+                )
+            elif t == "log":
+                state["log"].append(event["message"])
+            elif t == "done":
+                state["status"] = "done"
+                state["output_path"] = event.get("output_path")
+                if event.get("output_path"):
+                    state["output_filename"] = Path(event["output_path"]).name
+                state["summary"] = event.get("summary") or []
+                state["log"].append("Done.")
+            elif t == "error":
+                state["status"] = "error"
+                state["error"] = event.get("message")
+                state["log"].append(f"ERROR: {event.get('message')}")
+
+    import traceback as _tb
+    try:
+        clients = {} if dry_run else build_clients(cfg_yaml)
+        run(
+            cfg_yaml=cfg_yaml,
+            configs=configs,
+            clients=clients,
+            limit=limit,
+            dry_run=dry_run,
+            progress_callback=emit,
+        )
+    except Exception as e:
+        log.exception("Run %s failed", run_id)
+        emit({"type": "log", "message": _tb.format_exc()})
+        emit({"type": "error", "message": f"{type(e).__name__}: {e}"})
