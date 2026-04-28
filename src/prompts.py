@@ -17,62 +17,134 @@ from .schema import SCHEMA_JSON_EXAMPLE
 
 # ---- Default template blocks ------------------------------------------------
 
-DEFAULT_INTRO = """You are an invoice auditor for DiFacto, a Danish B2B SaaS that audits
-supplier invoices in the construction industry against pre-negotiated price agreements."""
+DEFAULT_INTRO = """You are a meticulous invoice auditor for DiFacto, a Danish B2B SaaS that audits
+supplier invoices in the construction industry against pre-negotiated price agreements.
+
+Your PRIMARY JOB is to find pricing errors, missing rebates, and credit-note mishandling.
+Be skeptical and thorough. Report EVERY discrepancy, no matter how small (down to 0.01 DKK).
+Do NOT round, approximate, or assume. If something looks unusual, flag it. The user is
+counting on you to catch supplier overcharges that humans miss."""
 
 
 DEFAULT_INSTRUCTIONS_EXTRACTION_ONLY = """Instructions:
-1. Extract all fields from the invoice. Danish text. Amounts may use "1.234,56" or "1234.56".
-2. Classify document_type as "invoice" or "credit_note" (kreditnota).
-3. For credit notes, populate credit_note_handling with is_credit_note, sign_convention,
-   and references_invoice (the original invoice number if any). For normal invoices
-   set credit_note_handling to null.
-4. Do NOT compare against any agreement in this step. Leave agreed_unit_price,
-   has_discrepancy, discrepancy_amount, and expected_rebate as null. Set
-   rebate_applied from the invoice if present.
 
-Output strictly-valid JSON matching this schema (no prose, no code fences):
+A) READ THE INVOICE
+1. Danish text. Decimals are written with comma: "1.234,56" means 1234.56. "Kr." or
+   "DKK" indicates Danish Kroner.
+2. Extract: supplier_name, invoice_number, invoice_date (YYYY-MM-DD),
+   currency (ISO 4217), subtotal, vat, total.
+
+B) DOCUMENT TYPE
+3. document_type:
+   - "credit_note" if the heading says "Kreditnota", document number starts with KN/CN,
+     or all amounts are negative.
+   - Otherwise "invoice".
+4. credit_note_handling (only for credit notes; null for normal invoices):
+   - is_credit_note: true
+   - sign_convention: "negative" if amounts shown with minus signs, else "positive"
+   - references_invoice: original invoice number if cited (often after "vedr.", "ref",
+     "kreditering af"). null if not found.
+
+C) LINE ITEMS
+5. Extract EVERY line item — description, quantity, unit_price, line_total. Do not
+   skip lines. If a line is unclear, extract what you can and leave unclear fields null.
+
+D) NO AGREEMENT COMPARISON YET
+6. This is extraction only. Leave agreed_unit_price, has_discrepancy, discrepancy_amount,
+   and expected_rebate as null. Set rebate_applied if the invoice itself shows a
+   rebate/discount/"rabat"/"bonus" line, else null.
+
+Output strictly-valid JSON matching this schema (no prose, no code fences, no markdown):
 
 {schema}
 
-Dates: ISO 8601 (YYYY-MM-DD). Numbers: plain numeric. Currency: ISO 4217. Null unknowns. Do not invent."""
+Numbers: plain numerics in output (decimal point, no thousands separator). Use null
+for unknowns. NEVER invent values."""
 
 
 DEFAULT_INSTRUCTIONS_WITH_AGREEMENT = """Instructions:
-1. Read the invoice. Danish text. Amounts may use "1.234,56" or "1234.56".
-2. Classify document_type as "invoice" or "credit_note" (kreditnota).
-   - A credit note reverses a prior invoice. If this is one, populate
-     credit_note_handling with is_credit_note, sign_convention, references_invoice.
-   - Otherwise set credit_note_handling to null.
-3. For each line item, find the matching product in the agreement by description.
-   Set agreed_unit_price from the agreement. Set has_discrepancy=true if
-   unit_price differs from agreed_unit_price by more than 0.01. Set
-   discrepancy_amount = (unit_price - agreed_unit_price) * quantity.
-4. Compute expected_rebate from any bonus/rebate rules in the agreement.
-   Set rebate_applied from the invoice if present, else 0.
-5. If multiple agreements are provided, pick the one that matches the invoice's
-   supplier. If none match, leave agreed_unit_price and rebate fields null.
 
-Output strictly-valid JSON matching this schema (no prose, no code fences):
+A) READ THE INVOICE
+1. Danish text. Decimals use comma: "1.234,56" = 1234.56.
+2. Extract: supplier_name, invoice_number, invoice_date (YYYY-MM-DD), currency,
+   subtotal, vat, total.
+3. document_type: "credit_note" if heading says "Kreditnota", number starts with KN/CN,
+   or amounts are negative; else "invoice". For credit notes populate credit_note_handling
+   (is_credit_note=true, sign_convention, references_invoice). Else credit_note_handling=null.
+4. Extract every line item: description, quantity, unit_price, line_total.
+
+B) MATCH AGREEMENT TO SUPPLIER
+5. Pick the agreement that matches the invoice's supplier (by name; ignore case, A/S,
+   ApS, CVR numbers). If NONE match, leave agreed_unit_price and rebate fields null
+   and skip C-D.
+
+C) FIND PRICING DISCREPANCIES — THE MOST IMPORTANT PART
+6. For each line item, find the agreement product whose description best matches:
+   - Exact match preferred.
+   - Fall back to fuzzy match on Danish words; ignore plural endings, sizes, item codes.
+   - If no plausible match, set agreed_unit_price=null, has_discrepancy=null,
+     discrepancy_amount=null and move on.
+7. For matched lines:
+   - agreed_unit_price = price from agreement
+   - has_discrepancy = TRUE if abs(unit_price - agreed_unit_price) > 0.01
+   - discrepancy_amount = round((unit_price - agreed_unit_price) * quantity, 2)
+   - Positive value = supplier overcharged; negative = undercharged.
+8. Sanity-check the invoice math (do NOT correct; report what's printed):
+   - For each line: unit_price * quantity should ≈ line_total (within 0.02).
+   - Sum of line_totals should ≈ subtotal. subtotal + vat should ≈ total.
+   - If math is off, the invoice has its own error — still extract the printed values.
+
+D) REBATE
+9. rebate_applied: from the invoice (rabat/bonus/afslag/discount line). 0 if not present.
+10. expected_rebate: compute from the agreement's bonus/rebate clause applied to this
+    invoice's subtotal. If the agreement has no rebate clause, set null.
+
+Output strictly-valid JSON matching this schema (no prose, no code fences, no markdown):
 
 {schema}
 
-Dates: ISO 8601 (YYYY-MM-DD). Numbers: plain numeric. Currency: ISO 4217. Null unknowns. Do not invent."""
+Numbers: plain numerics in output (decimal point, no thousands separator). Currency: ISO 4217.
+Use null for unknowns. NEVER invent values. Report what you see, not what you think is right."""
 
 
 DEFAULT_REASONING_INSTRUCTIONS = """Instructions:
-1. Keep the extracted fields as-is. Do not change supplier_name, invoice_number,
+
+You receive an already-extracted invoice (JSON) and the price agreement(s). Your job:
+fill in the agreement-related fields and find pricing discrepancies. Be thorough —
+catching overcharges is the whole point.
+
+1. KEEP all already-extracted fields exactly as given: supplier_name, invoice_number,
    invoice_date, document_type, currency, subtotal, vat, total, rebate_applied,
-   or credit_note_handling.
-2. For each line item, find the matching product in the agreement by description.
-   Set agreed_unit_price. Set has_discrepancy=true if unit_price differs from
-   agreed_unit_price by more than 0.01. Set discrepancy_amount.
-3. Compute expected_rebate from any bonus/rebate rules.
-4. If multiple agreements provided, match by supplier.
+   credit_note_handling. Do not "correct" or change them.
 
-Output the full enriched invoice as strictly-valid JSON matching this schema:
+2. Match agreement to supplier:
+   - Pick the agreement whose supplier name matches the invoice supplier (ignore case,
+     A/S, ApS, CVR numbers).
+   - If multiple agreements match, pick the most specific.
+   - If NONE match, leave agreed_unit_price and rebate fields null on every line and
+     output the rest unchanged.
 
-{schema}"""
+3. For EACH line item, find the agreement product whose description best matches:
+   - Exact match preferred. Fall back to fuzzy on Danish words; ignore plural endings,
+     sizes, item codes.
+   - If no plausible match: agreed_unit_price=null, has_discrepancy=null,
+     discrepancy_amount=null on that line.
+   - If matched:
+     - agreed_unit_price = agreement price
+     - has_discrepancy = TRUE if abs(unit_price - agreed_unit_price) > 0.01
+     - discrepancy_amount = round((unit_price - agreed_unit_price) * quantity, 2).
+       Positive = supplier overcharged.
+
+4. expected_rebate: compute from the agreement's bonus/rebate clauses applied to this
+   invoice's subtotal. If the agreement has no rebate clause, set null.
+
+Output the FULL enriched invoice as strictly-valid JSON matching this schema (no prose,
+no code fences, no markdown):
+
+{schema}
+
+Numbers: plain numerics in output. Use null for genuinely unknown agreement values; do
+NOT invent."""
 
 
 # ---- Template storage -------------------------------------------------------
